@@ -13,7 +13,7 @@
 ```powershell
 cd backend
 .\.venv\Scripts\python.exe -m pip install ".[dev]"
-.\.venv\Scripts\python.exe -m uvicorn app.main:app --reload
+.\.venv\Scripts\python.exe -m uvicorn app.main:app --reload --port 8001
 ```
 
 另开一个终端启动网页：
@@ -25,6 +25,8 @@ npm run dev
 ```
 
 打开 `http://127.0.0.1:5173/`，选择车型并提交问题。
+
+前端默认请求本机 `http://127.0.0.1:8001`。部署到其他地址时，在 `frontend/.env.local` 中设置 `VITE_API_BASE_URL`。
 
 ## 导入本地 PDF
 
