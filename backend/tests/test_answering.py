@@ -90,3 +90,26 @@ def test_malformed_model_output_returns_an_ungrounded_response(service, corolla,
     assert result.grounded is False
     assert result.steps == []
     assert result.citations == []
+
+
+@pytest.mark.parametrize(
+    "completion",
+    [
+        SimpleNamespace(choices=[]),
+        SimpleNamespace(choices=[SimpleNamespace()]),
+        SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace())]),
+        SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content=None))]
+        ),
+    ],
+)
+def test_incomplete_model_response_envelope_returns_an_ungrounded_response(
+    service, corolla, evidence, completion
+):
+    service.client.chat.completions.create = lambda **_: completion
+
+    result = service.answer_question("胎压警告是什么意思？", corolla, evidence)
+
+    assert result.grounded is False
+    assert result.steps == []
+    assert result.citations == []

@@ -43,7 +43,7 @@ class AnswerService:
                 {"role": "user", "content": question},
             ],
         )
-        parsed = _parse_content(completion.choices[0].message.content)
+        parsed = _parse_content(_completion_content(completion))
         if parsed is None:
             return _safe_response(MALFORMED_RESPONSE_ANSWER)
 
@@ -106,6 +106,14 @@ def _parse_content(content: Any) -> dict[str, str | list[str]] | None:
     ):
         return None
     return {"answer": answer, "steps": steps, "warnings": warnings}
+
+
+def _completion_content(completion: Any) -> Any | None:
+    choices = getattr(completion, "choices", None)
+    if not isinstance(choices, (list, tuple)) or not choices:
+        return None
+    message = getattr(choices[0], "message", None)
+    return getattr(message, "content", None)
 
 
 def _citations_from_evidence(evidence: list[RetrievedChunk]) -> list[Citation]:
