@@ -1,4 +1,13 @@
+from dataclasses import dataclass
+
 from app.rag.store import ManualStore, RetrievedChunk
+
+
+@dataclass(frozen=True)
+class RetrievalOptions:
+    limit: int = 4
+    chapter_titles: set[str] | None = None
+    minimum_distance: float = 1.1
 
 
 def retrieve_evidence(

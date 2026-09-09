@@ -7,7 +7,7 @@ from types import SimpleNamespace
 import pytest
 
 from app.rag.chunking import ManualChunk
-from app.rag.retriever import retrieve_evidence
+from app.rag.retriever import RetrievalOptions, retrieve_evidence
 from app.rag.store import ManualStore
 from scripts.import_manual import provenance_is_confirmed
 
@@ -46,17 +46,32 @@ class FakeCollection:
             "distances": [[0.2 if index == 0 else 1.3 for index, _ in enumerate(matches)]],
         }
 
+    def get(self, *, where, include):
+        matches = [
+            (item_id, row)
+            for item_id, row in self.rows.items()
+            if row[1]["vehicle_id"] == where["vehicle_id"]
+        ]
+        return {
+            "ids": [item_id for item_id, _ in matches],
+            "documents": [row[0] for _, row in matches],
+            "metadatas": [row[1] for _, row in matches],
+        }
+
 
 @pytest.fixture
 def store():
     return ManualStore(collection=FakeCollection(), embedding_model=FakeEmbeddingModel())
 
 
-def make_chunk(vehicle_id: str, text: str) -> ManualChunk:
+def make_chunk(vehicle_id: str, text: str, *, chapter: str | None = None) -> ManualChunk:
+    metadata = {"vehicle_id": vehicle_id, "source_text": text, "page_number": 1}
+    if chapter is not None:
+        metadata["chapter_title"] = chapter
     return ManualChunk(
         id=f"{vehicle_id}-{text}",
         text=text,
-        metadata={"vehicle_id": vehicle_id, "source_text": text, "page_number": 1},
+        metadata=metadata,
     )
 
 
@@ -70,6 +85,30 @@ def test_query_never_returns_chunks_for_another_vehicle(store):
 
     assert [item.metadata["vehicle_id"] for item in results] == ["toyota-corolla"]
     assert store.collection.last_query["where"] == {"vehicle_id": "toyota-corolla"}
+
+
+def test_list_chunks_filters_by_vehicle_and_selected_chapter(store):
+    store.upsert(
+        [
+            make_chunk("toyota-corolla", "轮胎", chapter="轮胎"),
+            make_chunk("toyota-corolla", "保养", chapter="保养"),
+            make_chunk("honda-civic", "轮胎", chapter="轮胎"),
+        ]
+    )
+
+    assert [
+        chunk.text for chunk in store.list_chunks("toyota-corolla", {"轮胎"})
+    ] == ["轮胎"]
+
+
+def test_retrieval_options_uses_default_limit_chapter_scope_and_distance():
+    options = RetrievalOptions()
+
+    assert (options.limit, options.chapter_titles, options.minimum_distance) == (
+        4,
+        None,
+        1.1,
+    )
 
 
 def test_retrieve_evidence_discards_results_beyond_distance_threshold(store):

@@ -33,6 +33,13 @@ class VectorCollection(Protocol):
         include: list[str],
     ) -> dict[str, list[list[Any]]]: ...
 
+    def get(
+        self,
+        *,
+        where: dict[str, str],
+        include: list[str],
+    ) -> dict[str, list[Any]]: ...
+
 
 @dataclass(frozen=True)
 class RetrievedChunk:
@@ -86,6 +93,31 @@ class ManualStore:
             metadatas=[chunk.metadata for chunk in chunks],
             embeddings=self._embedding_model().encode([chunk.text for chunk in chunks]),
         )
+
+    def list_chunks(
+        self, vehicle_id: str, chapter_titles: set[str] | None = None
+    ) -> list[RetrievedChunk]:
+        if not vehicle_id:
+            raise ValueError("vehicle_id is required")
+        if chapter_titles == set() or self.collection.count() == 0:
+            return []
+
+        result = self.collection.get(
+            where={"vehicle_id": vehicle_id},
+            include=["documents", "metadatas"],
+        )
+        ids = result.get("ids", []) or []
+        documents = result.get("documents", []) or []
+        metadatas = result.get("metadatas", []) or []
+        return [
+            RetrievedChunk(id=item_id, text=text, metadata=metadata, distance=0.0)
+            for item_id, text, metadata in zip(ids, documents, metadatas)
+            if metadata.get("vehicle_id") == vehicle_id
+            and (
+                chapter_titles is None
+                or metadata.get("chapter_title") in chapter_titles
+            )
+        ]
 
     def query(self, vehicle_id: str, question: str, limit: int = 4) -> list[RetrievedChunk]:
         if not vehicle_id:
