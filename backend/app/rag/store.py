@@ -13,6 +13,8 @@ class EmbeddingModel(Protocol):
 
 
 class VectorCollection(Protocol):
+    def count(self) -> int: ...
+
     def upsert(
         self,
         *,
@@ -43,6 +45,8 @@ class RetrievedChunk:
 class ManualStore:
     """Local Chroma-backed manual storage with mandatory vehicle filtering."""
 
+    MODEL_CACHE_DIR = Path(__file__).resolve().parents[2] / "data" / "models"
+
     def __init__(
         self,
         chroma_path: str | Path | None = None,
@@ -63,11 +67,15 @@ class ManualStore:
             name="manual_chunks", metadata={"hnsw:space": "cosine"}
         )
 
-    @staticmethod
-    def _create_embedding_model() -> EmbeddingModel:
+    @classmethod
+    def _create_embedding_model(cls) -> EmbeddingModel:
         from sentence_transformers import SentenceTransformer
 
-        return SentenceTransformer("sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2")
+        cls.MODEL_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        return SentenceTransformer(
+            "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
+            cache_folder=str(cls.MODEL_CACHE_DIR),
+        )
 
     def upsert(self, chunks: list[ManualChunk]) -> None:
         if not chunks:
@@ -83,6 +91,8 @@ class ManualStore:
         if not vehicle_id:
             raise ValueError("vehicle_id is required")
         if limit <= 0:
+            return []
+        if self.collection.count() == 0:
             return []
 
         result = self.collection.query(

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import sys
 from dataclasses import dataclass
+from types import SimpleNamespace
 
 import pytest
 
@@ -26,6 +28,9 @@ class FakeCollection:
     def upsert(self, *, ids, documents, metadatas, embeddings):
         for item_id, document, metadata, embedding in zip(ids, documents, metadatas, embeddings):
             self.rows[item_id] = (document, metadata, embedding)
+
+    def count(self):
+        return len(self.rows)
 
     def query(self, *, query_embeddings, n_results, where, include):
         self.last_query = {"query_embeddings": query_embeddings, "n_results": n_results, "where": where, "include": include}
@@ -88,6 +93,48 @@ def test_retrieve_evidence_returns_empty_when_all_results_are_insufficient(store
     }
 
     assert retrieve_evidence("toyota-corolla", "轮胎警告", store=store) == []
+
+
+def test_query_returns_empty_without_loading_an_embedding_model_for_an_empty_collection(
+    monkeypatch,
+):
+    store = ManualStore(collection=FakeCollection())
+
+    def embedding_model_must_not_be_loaded():
+        raise AssertionError("an empty collection must not load an embedding model")
+
+    monkeypatch.setattr(
+        ManualStore,
+        "_create_embedding_model",
+        staticmethod(embedding_model_must_not_be_loaded),
+    )
+
+    assert store.query("toyota-corolla", "轮胎警告") == []
+
+
+def test_embedding_model_uses_the_project_local_cache_folder(monkeypatch, tmp_path):
+    cache_folder = tmp_path / "data" / "models"
+    captured: dict[str, object] = {}
+
+    class FakeSentenceTransformer:
+        def __init__(self, model_name, *, cache_folder):
+            captured["model_name"] = model_name
+            captured["cache_folder"] = cache_folder
+
+    monkeypatch.setattr(ManualStore, "MODEL_CACHE_DIR", cache_folder, raising=False)
+    monkeypatch.setitem(
+        sys.modules,
+        "sentence_transformers",
+        SimpleNamespace(SentenceTransformer=FakeSentenceTransformer),
+    )
+
+    ManualStore._create_embedding_model()
+
+    assert cache_folder.is_dir()
+    assert captured == {
+        "model_name": "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
+        "cache_folder": str(cache_folder),
+    }
 
 
 def test_provenance_requires_a_confirmed_matching_vehicle_row(tmp_path):

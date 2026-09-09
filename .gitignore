@@ -2,6 +2,7 @@
 .superpowers/
 backend/.env
 backend/data/chroma/
+backend/data/models/
 backend/data/manuals/*.pdf
 __pycache__/
 .pytest_cache/
