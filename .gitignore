@@ -1,0 +1,9 @@
+.worktrees/
+.superpowers/
+backend/.env
+backend/data/chroma/
+backend/data/manuals/*.pdf
+__pycache__/
+.pytest_cache/
+frontend/node_modules/
+frontend/dist/
