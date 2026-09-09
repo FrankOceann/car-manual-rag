@@ -1,13 +1,49 @@
 # 汽车维修手册 RAG
 
-本项目基于公开可获取或已获授权的原厂手册，为比亚迪海豹、丰田卡罗拉和本田思域提供车型隔离的检索问答演示。
+本项目为比亚迪海豹、丰田卡罗拉和本田思域提供车型隔离的检索问答演示。回答仅基于本地已导入的资料，并会显示手册页码引用；资料不足时不会编造维修步骤。
 
 资料来源和版权状态记录在 [docs/data-sources.md](docs/data-sources.md)。在对应条目确认并标记为“已确认可用”前，手册不得导入。
 
-## 后端开发
+完整原厂 PDF 不会提交到仓库。仅可将用户本地取得、并在 `docs/data-sources.md` 中标记为“已确认可用”的资料导入本机向量库。
 
-在 `backend/` 中复制 `.env.example` 为 `.env`，仅在该本地文件中填入 `DEEPSEEK_API_KEY`。运行测试：
+## 运行项目
 
-```bash
-uv run pytest -v
+在 `backend/` 中复制 `.env.example` 为 `.env`，仅在该本地文件中填入 `DEEPSEEK_API_KEY`。然后执行：
+
+```powershell
+cd backend
+.\.venv\Scripts\python.exe -m pip install ".[dev]"
+.\.venv\Scripts\python.exe -m uvicorn app.main:app --reload
 ```
+
+另开一个终端启动网页：
+
+```powershell
+cd frontend
+npm install
+npm run dev
+```
+
+打开 `http://127.0.0.1:5173/`，选择车型并提交问题。
+
+## 导入本地 PDF
+
+将 PDF 放在 `backend/data/manuals/`，确认其资料来源行的状态为“已确认可用”后执行：
+
+```powershell
+cd backend
+.\.venv\Scripts\python.exe scripts\import_manual.py --vehicle-id honda-civic --pdf data\manuals\honda-civic-2024-owner-manual.pdf --title "2024 Honda Civic Owner's Manual"
+```
+
+## 验证
+
+```powershell
+cd backend
+.\.venv\Scripts\python.exe -m pytest -v
+
+cd ..\frontend
+npm test -- --run
+npm run build
+```
+
+可复现的问题见 [docs/test-questions.md](docs/test-questions.md)。
