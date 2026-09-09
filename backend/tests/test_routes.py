@@ -125,6 +125,19 @@ def test_cors_allows_the_local_frontend_origin():
     assert response.headers["access-control-allow-origin"] == "http://localhost:5173"
 
 
+def test_cors_allows_the_loopback_frontend_origin():
+    response = TestClient(app).options(
+        "/chat",
+        headers={
+            "Origin": "http://127.0.0.1:5173",
+            "Access-Control-Request-Method": "POST",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == "http://127.0.0.1:5173"
+
+
 def test_cors_denies_a_foreign_origin():
     response = TestClient(app).options(
         "/chat",
