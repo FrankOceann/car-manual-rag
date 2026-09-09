@@ -26,6 +26,7 @@ def test_chunk_page_text_preserves_vehicle_and_page_metadata():
         "manual_title": "卡罗拉用户手册",
         "chapter_title": "轮胎",
         "page_number": 42,
+        "source_text": chunks[0].text,
     }
 
 
@@ -45,6 +46,7 @@ def test_chunk_page_text_normalizes_whitespace_and_uses_overlapping_windows():
 
     assert [chunk.id for chunk in chunks] == ["byd-seal-p3-c0", "byd-seal-p3-c1"]
     assert [chunk.text for chunk in chunks] == ["alpha beta", "eta gamma"]
+    assert [chunk.metadata["source_text"] for chunk in chunks] == ["alpha beta", "eta gamma"]
 
 
 def test_chunk_page_text_skips_blank_pages():

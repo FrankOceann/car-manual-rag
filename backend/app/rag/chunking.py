@@ -45,11 +45,12 @@ def chunk_page_text(
         text = normalized_text[start : start + chunk_size]
         if not text:
             break
+        chunk_metadata = metadata | {"source_text": text}
         chunks.append(
             ManualChunk(
                 id=f"{vehicle.id}-p{page_number}-c{index}",
                 text=text,
-                metadata=metadata.copy(),
+                metadata=chunk_metadata,
             )
         )
         if start + chunk_size >= len(normalized_text):
