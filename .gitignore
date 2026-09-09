@@ -1,6 +1,7 @@
 .worktrees/
 .superpowers/
 backend/.env
+backend/.venv/
 backend/data/chroma/
 backend/data/models/
 backend/data/manuals/*.pdf

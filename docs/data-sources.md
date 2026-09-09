@@ -5,5 +5,5 @@
 | 车型 | 覆盖车型/年份 | 发布者 URL | 获取日期 | 许可或访问状态 | 本地文件名 | 状态 |
 | --- | --- | --- | --- | --- | --- | --- |
 | 比亚迪海豹 | 比亚迪海豹 2024 | https://prod2.byd.com/cn/user-manual | 2026-09-09 | 官方下载页；部分资料需认证车主；完整 PDF 不入库 | 用户本地上传 | 仅作官方入口记录 |
-| 丰田卡罗拉 | 丰田卡罗拉 2024 | 待确认 | 待确认 | 待确认 | `toyota-corolla-2024.pdf` | 待确认，不可导入 |
+| 丰田卡罗拉 | 丰田卡罗拉 2024 | https://www.toyota.com/content/dam/toyotaowners/dom/add-driver-pdfs/2024/corolla/MY24_Corolla_OM_Excerpt_for_Driving_Support_Systems_D1_ML_0621.pdf | 2026-09-10 | Toyota 官方公开下载的《驾驶辅助系统》车主手册节选；仅限用户本地演示，受 Toyota 使用条款与版权约束，不得再分发 | `toyota-corolla-2024-driving-support.pdf` | 已确认可用 |
 | 本田思域 | 本田思域 2024 | https://techinfo.honda.com/rjanisis/pubs/OM/AH/AT202424OM/enu/AT202424OMEN.PDF | 2026-09-10 | Honda 官方公开下载；仅限用户本地演示，受 Honda 使用条款与版权约束，不得再分发 | `honda-civic-2024-owner-manual.pdf` | 已确认可用 |
