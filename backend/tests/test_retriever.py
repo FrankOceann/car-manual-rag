@@ -111,6 +111,15 @@ def test_retrieval_options_uses_default_limit_chapter_scope_and_distance():
     )
 
 
+def test_retrieval_options_keeps_selected_chapters_immutable():
+    options = RetrievalOptions(chapter_titles={"轮胎"})
+
+    assert isinstance(options.chapter_titles, frozenset)
+    assert options.chapter_titles == {"轮胎"}
+    with pytest.raises(AttributeError):
+        options.chapter_titles.add("保养")
+
+
 def test_retrieve_evidence_discards_results_beyond_distance_threshold(store):
     store.upsert([
         make_chunk("toyota-corolla", "轮胎压力警告"),
@@ -120,6 +129,19 @@ def test_retrieve_evidence_discards_results_beyond_distance_threshold(store):
     results = retrieve_evidence("toyota-corolla", "轮胎警告", store=store)
 
     assert [(item.text, item.distance) for item in results] == [("轮胎压力警告", 0.2)]
+
+
+def test_retrieve_evidence_returns_empty_when_selected_chapter_has_no_candidates(store):
+    store.upsert([make_chunk("toyota-corolla", "保养周期", chapter="保养")])
+
+    results = retrieve_evidence(
+        "toyota-corolla",
+        "保养周期",
+        options=RetrievalOptions(chapter_titles={"轮胎"}),
+        store=store,
+    )
+
+    assert results == []
 
 
 def test_retrieve_evidence_returns_empty_when_all_results_are_insufficient(store):
