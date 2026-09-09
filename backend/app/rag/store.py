@@ -51,7 +51,7 @@ class ManualStore:
         embedding_model: EmbeddingModel | None = None,
     ):
         self.collection = collection or self._create_collection(chroma_path)
-        self.embedding_model = embedding_model or self._create_embedding_model()
+        self.embedding_model = embedding_model
 
     @staticmethod
     def _create_collection(chroma_path: str | Path | None) -> VectorCollection:
@@ -76,7 +76,7 @@ class ManualStore:
             ids=[chunk.id for chunk in chunks],
             documents=[chunk.text for chunk in chunks],
             metadatas=[chunk.metadata for chunk in chunks],
-            embeddings=self.embedding_model.encode([chunk.text for chunk in chunks]),
+            embeddings=self._embedding_model().encode([chunk.text for chunk in chunks]),
         )
 
     def query(self, vehicle_id: str, question: str, limit: int = 4) -> list[RetrievedChunk]:
@@ -86,7 +86,7 @@ class ManualStore:
             return []
 
         result = self.collection.query(
-            query_embeddings=self.embedding_model.encode([question]),
+            query_embeddings=self._embedding_model().encode([question]),
             n_results=limit,
             where={"vehicle_id": vehicle_id},
             include=["documents", "metadatas", "distances"],
@@ -100,3 +100,8 @@ class ManualStore:
             for item_id, text, metadata, distance in zip(ids, documents, metadatas, distances)
             if metadata.get("vehicle_id") == vehicle_id
         ]
+
+    def _embedding_model(self) -> EmbeddingModel:
+        if self.embedding_model is None:
+            self.embedding_model = self._create_embedding_model()
+        return self.embedding_model
