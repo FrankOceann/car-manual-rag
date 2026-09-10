@@ -77,7 +77,7 @@ def test_manual_chapters_returns_empty_without_loading_an_embedding_model(
 
 
 def test_chat_returns_ungrounded_when_retrieval_is_empty(monkeypatch):
-    monkeypatch.setattr("app.api.routes.retrieve_evidence", lambda *_: [])
+    monkeypatch.setattr("app.api.routes.retrieve_evidence", lambda *args, **kwargs: [])
 
     response = TestClient(app).post(
         "/chat", json={"vehicle_id": "toyota-corolla", "question": "保养周期"}
@@ -89,7 +89,7 @@ def test_chat_returns_ungrounded_when_retrieval_is_empty(monkeypatch):
 
 def test_chat_returns_503_when_deepseek_is_not_configured(monkeypatch):
     monkeypatch.setattr(
-        "app.api.routes.retrieve_evidence", lambda *_: sample_evidence()
+        "app.api.routes.retrieve_evidence", lambda *args, **kwargs: sample_evidence()
     )
 
     def missing_configuration(*_):
@@ -107,6 +107,41 @@ def test_chat_returns_503_when_deepseek_is_not_configured(monkeypatch):
 def test_chat_rejects_a_blank_question():
     response = TestClient(app).post(
         "/chat", json={"vehicle_id": "toyota-corolla", "question": "   "}
+    )
+
+    assert response.status_code == 422
+
+
+def test_chat_passes_selected_chapters_to_retrieval(monkeypatch):
+    captured = {}
+    monkeypatch.setattr(
+        "app.api.routes.retrieve_evidence",
+        lambda *args, **kwargs: captured.update(kwargs) or [],
+    )
+
+    response = TestClient(app).post(
+        "/chat",
+        json={
+            "vehicle_id": "toyota-corolla",
+            "question": "轮胎",
+            "chapter_titles": ["轮胎"],
+        },
+    )
+
+    assert response.status_code == 200
+    assert captured["options"].chapter_titles == {"轮胎"}
+
+
+def test_chat_rejects_blank_chapter_titles(monkeypatch):
+    monkeypatch.setattr("app.api.routes.retrieve_evidence", lambda *args, **kwargs: [])
+
+    response = TestClient(app).post(
+        "/chat",
+        json={
+            "vehicle_id": "toyota-corolla",
+            "question": "轮胎",
+            "chapter_titles": ["   "],
+        },
     )
 
     assert response.status_code == 422

@@ -1,22 +1,15 @@
-from typing import Annotated, Any
+from typing import Any
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, Field
 
 from app.catalog import get_vehicle, list_vehicles
 from app.rag.answering import answer_question
-from app.rag.retriever import retrieve_evidence
+from app.rag.retriever import RetrievalOptions, retrieve_evidence
 from app.rag.store import ManualStore
-from app.schemas import ChatResponse, Vehicle
+from app.schemas import ChatRequest, ChatResponse, Vehicle
 
 
 router = APIRouter()
-
-
-class ChatRequest(BaseModel):
-    vehicle_id: str
-    question: Annotated[str, Field(min_length=1)]
-
 
 @router.get("/vehicles", response_model=list[Vehicle])
 def vehicles() -> list[Vehicle]:
@@ -48,7 +41,15 @@ def chat(request: ChatRequest) -> ChatResponse:
     if not request.question.strip():
         raise HTTPException(status_code=422, detail="Question must not be blank.")
 
-    evidence = retrieve_evidence(vehicle.id, request.question)
+    evidence = retrieve_evidence(
+        vehicle.id,
+        request.question,
+        options=RetrievalOptions(
+            chapter_titles=set(request.chapter_titles)
+            if request.chapter_titles is not None
+            else None
+        ),
+    )
     try:
         return answer_question(request.question, vehicle, evidence)
     except RuntimeError as error:

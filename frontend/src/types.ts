@@ -14,3 +14,9 @@ export type ChatResponse = {
   citations: Citation[];
   grounded: boolean;
 };
+
+export type ChatRequest = {
+  vehicle_id: string;
+  question: string;
+  chapter_titles?: string[];
+};
