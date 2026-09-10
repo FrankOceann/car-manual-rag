@@ -194,6 +194,28 @@ def test_retrieval_options_keeps_selected_chapters_immutable():
         options.chapter_titles.add("保养")
 
 
+@pytest.mark.parametrize("limit", [0, -1])
+def test_retrieval_options_rejects_nonpositive_limits(limit):
+    with pytest.raises(ValueError, match="limit must be positive"):
+        RetrievalOptions(limit=limit)
+
+
+@pytest.mark.parametrize("token_empty", [False, True])
+def test_retrieve_evidence_caps_custom_limits_at_four(store, token_empty):
+    chunks = [
+        make_chunk("toyota-corolla", "-" * index if token_empty else f"tire {index}")
+        for index in range(1, 9)
+    ]
+    store.upsert(chunks)
+    set_vector_results(store, chunks, [0.2] * 8)
+
+    results = retrieve_evidence(
+        "toyota-corolla", "tire", options=RetrievalOptions(limit=8), store=store
+    )
+
+    assert len(results) == 4
+
+
 def test_retrieve_evidence_discards_results_beyond_distance_threshold(store):
     store.upsert([
         make_chunk("toyota-corolla", "轮胎压力警告"),
@@ -216,6 +238,32 @@ def test_retrieve_evidence_returns_empty_when_selected_chapter_has_no_candidates
     )
 
     assert results == []
+
+
+@pytest.mark.parametrize("limit, expected", [(1, ["??"]), (4, ["??", "----"])])
+def test_token_empty_chapter_uses_scoped_vector_order_and_distance_limit(
+    store, limit, expected
+):
+    chunks = [
+        make_chunk("toyota-corolla", "----", chapter="symbols"),
+        make_chunk("toyota-corolla", "??", chapter="symbols"),
+        make_chunk("toyota-corolla", "!!!", chapter="symbols"),
+        make_chunk("toyota-corolla", "tire pressure", chapter="tires"),
+        make_chunk("honda-civic", "....", chapter="symbols"),
+    ]
+    store.upsert(chunks)
+    set_vector_results(
+        store, [chunks[3], chunks[4], chunks[1], chunks[0], chunks[2]],
+        [0.01, 0.02, 0.2, 0.3, 1.2],
+    )
+
+    results = retrieve_evidence(
+        "toyota-corolla", "symbols",
+        options=RetrievalOptions(limit=limit, chapter_titles={"symbols"}),
+        store=store,
+    )
+
+    assert [chunk.text for chunk in results] == expected
 
 
 def test_retrieve_evidence_applies_chapter_scope_before_top_k_limit(store):

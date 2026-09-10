@@ -131,11 +131,9 @@ def _completion_content(completion: Any) -> Any | None:
 def _citations_from_evidence(
     evidence: list[RetrievedChunk], citation_ids: list[str]
 ) -> list[Citation]:
-    evidence_by_id = {chunk.id: chunk for chunk in evidence}
+    selected_ids = set(citation_ids)
     selected_evidence = [
-        evidence_by_id[citation_id]
-        for citation_id in citation_ids
-        if citation_id in evidence_by_id
+        chunk for chunk in evidence if chunk.id in selected_ids
     ]
     if not selected_evidence:
         selected_evidence = evidence

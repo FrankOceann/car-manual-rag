@@ -12,6 +12,9 @@ class RetrievalOptions:
     minimum_distance: float = 1.1
 
     def __post_init__(self) -> None:
+        if self.limit <= 0:
+            raise ValueError("limit must be positive")
+        object.__setattr__(self, "limit", min(self.limit, 4))
         if self.chapter_titles is not None:
             object.__setattr__(self, "chapter_titles", frozenset(self.chapter_titles))
 
@@ -44,9 +47,13 @@ def retrieve_evidence(
     scoped_ids = {chunk.id for chunk in candidates}
     vector_results = [chunk for chunk in vector_results if chunk.id in scoped_ids]
     vector_by_id = {chunk.id: chunk for chunk in vector_results}
-    bm25_scores = BM25Okapi([_tokenize(chunk.text) for chunk in candidates]).get_scores(
-        _tokenize(question)
-    )
+    tokenized_candidates = [_tokenize(chunk.text) for chunk in candidates]
+    if not any(tokenized_candidates):
+        return [
+            chunk for chunk in vector_results
+            if chunk.distance <= retrieval_options.minimum_distance
+        ][: retrieval_options.limit]
+    bm25_scores = BM25Okapi(tokenized_candidates).get_scores(_tokenize(question))
     bm25_ranks = {
         candidates[index].id: rank
         for rank, index in enumerate(

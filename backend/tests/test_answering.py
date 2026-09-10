@@ -295,6 +295,29 @@ def test_answer_keeps_same_page_number_from_different_manuals(
     ]
 
 
+def test_answer_deduplicates_selected_pages_in_retrieval_rank_order(
+    service, corolla, ranked_multi_page_evidence
+):
+    response = {
+        "answer": "检查轮胎",
+        "steps": [],
+        "warnings": [],
+        "citation_ids": ["page-12", "second-page-10", "first-page-10"],
+    }
+    service.client.chat.completions.create = lambda **_: SimpleNamespace(
+        choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps(response)))]
+    )
+
+    result = service.answer_question(
+        "胎压警告是什么意思？", corolla, ranked_multi_page_evidence
+    )
+
+    assert [(citation.page_number, citation.excerpt) for citation in result.citations] == [
+        (10, "第 10 页的第一段。"),
+        (12, "第 12 页的段落。"),
+    ]
+
+
 @pytest.mark.parametrize("citation_ids", [None, [], ["not-in-evidence"]])
 def test_answer_falls_back_to_unique_evidence_pages_when_citation_ids_are_unusable(
     service, corolla, same_page_evidence, citation_ids
