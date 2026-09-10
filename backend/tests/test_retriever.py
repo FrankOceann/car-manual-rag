@@ -304,6 +304,34 @@ def test_hybrid_retrieval_promotes_exact_keyword_match_over_vector_order(store):
     assert retrieve_evidence("toyota-corolla", "DTC P0420", store=store)[0].id == "dtc-p0420"
 
 
+def test_hybrid_retrieval_keeps_vector_order_when_no_lexical_term_matches(store):
+    chunks = [
+        make_chunk("toyota-corolla", "engine oil maintenance"),
+        make_chunk("toyota-corolla", "trailer towing"),
+    ]
+    store.upsert(chunks)
+    set_vector_results(store, chunks, [0.2, 0.3])
+
+    results = retrieve_evidence("toyota-corolla", "中文问题", store=store)
+
+    assert [chunk.id for chunk in results] == [chunk.id for chunk in chunks]
+
+
+def test_hybrid_retrieval_expands_common_chinese_vehicle_terms_for_english_manuals(store):
+    chunks = [
+        make_chunk("toyota-corolla", "unrelated maintenance"),
+        make_chunk("toyota-corolla", "engine oil level check"),
+        make_chunk("toyota-corolla", "unrelated tire pressure"),
+    ]
+    store.upsert(chunks)
+    set_vector_results(store, chunks, [0.2, 0.3, 0.4])
+
+    question = "\u5982\u4f55\u68c0\u67e5\u53d1\u52a8\u673a\u673a\u6cb9\u6db2\u4f4d\uff1f"
+    results = retrieve_evidence("toyota-corolla", question, store=store)
+
+    assert results[0].id == chunks[1].id
+
+
 def test_hybrid_retrieval_filters_fused_candidates_before_applying_limit(store):
     seed_threshold_before_limit_fixture(store)
 

@@ -53,21 +53,31 @@ def retrieve_evidence(
             chunk for chunk in vector_results
             if chunk.distance <= retrieval_options.minimum_distance
         ][: retrieval_options.limit]
-    bm25_scores = BM25Okapi(tokenized_candidates).get_scores(_tokenize(question))
+    bm25_scores = BM25Okapi(tokenized_candidates).get_scores(
+        _tokenize(_expand_lexical_query(question))
+    )
     bm25_ranks = {
         candidates[index].id: rank
         for rank, index in enumerate(
-            sorted(range(len(candidates)), key=lambda index: -bm25_scores[index]),
+            sorted(
+                (index for index, score in enumerate(bm25_scores) if score > 0),
+                key=lambda index: -bm25_scores[index],
+            ),
             start=1,
         )
     }
+    if not bm25_ranks:
+        return [
+            chunk for chunk in vector_results
+            if chunk.distance <= retrieval_options.minimum_distance
+        ][: retrieval_options.limit]
     vector_ranks = {
         chunk.id: rank for rank, chunk in enumerate(vector_results, start=1)
     }
     fused = [
         (
             1 / (60 + vector_ranks[chunk.id])
-            + 1 / (60 + bm25_ranks[chunk.id]),
+            + (1 / (60 + bm25_ranks[chunk.id]) if chunk.id in bm25_ranks else 0),
             vector_by_id[chunk.id],
         )
         for chunk in candidates
@@ -98,3 +108,35 @@ def retrieve_baseline_evidence(
 
 def _tokenize(text: str) -> list[str]:
     return re.findall(r"[a-z0-9]+|[\u4e00-\u9fff]", text.lower())
+
+
+_CHINESE_TO_ENGLISH_TERMS = {
+    "紧急驾驶停止系统": "emergency driving stop system",
+    "驾驶员失去驾驶能力": "driver incapacitated",
+    "发动机机油": "engine oil",
+    "机油液位": "engine oil level",
+    "跨接启动": "jump start",
+    "紧急拖车": "emergency towing",
+    "牵引拖车": "trailer towing",
+    "后备箱": "trunk",
+    "蓄电池": "battery",
+    "驻车制动": "parking brake",
+    "危险警告灯": "hazard warning lights",
+    "停车保持": "hold",
+    "最低车速": "minimum speed",
+    "疲劳驾驶": "drowsy driving",
+    "液位": "level",
+    "检查": "check",
+    "取消": "cancel",
+    "拖车": "towing",
+    "蜂鸣器": "buzzer",
+}
+
+
+def _expand_lexical_query(question: str) -> str:
+    """Append conservative automotive English aliases for an English manual corpus."""
+    aliases = [
+        english for chinese, english in _CHINESE_TO_ENGLISH_TERMS.items()
+        if chinese in question
+    ]
+    return " ".join([question, *aliases])
