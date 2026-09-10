@@ -76,6 +76,79 @@ def make_chunk(vehicle_id: str, text: str, *, chapter: str | None = None) -> Man
     )
 
 
+def set_vector_results(store, chunks: list[ManualChunk], distances: list[float]) -> None:
+    def query(**kwargs):
+        limit = kwargs["n_results"]
+        selected_chunks = chunks[:limit]
+        return {
+            "ids": [[chunk.id for chunk in selected_chunks]],
+            "documents": [[chunk.text for chunk in selected_chunks]],
+            "metadatas": [[chunk.metadata for chunk in selected_chunks]],
+            "distances": [distances[:limit]],
+        }
+
+    store.collection.query = query
+
+
+def seed_keyword_promotion_fixture(store) -> list[ManualChunk]:
+    chunks = [
+        ManualChunk(
+            id="vector-first",
+            text="发动机故障诊断提示",
+            metadata={"vehicle_id": "toyota-corolla", "source_text": "发动机故障诊断提示", "page_number": 1},
+        ),
+        ManualChunk(
+            id="dtc-generic",
+            text="DTC generic",
+            metadata={"vehicle_id": "toyota-corolla", "source_text": "DTC generic", "page_number": 2},
+        ),
+        ManualChunk(
+            id="dtc-p0420",
+            text="DTC P0420",
+            metadata={"vehicle_id": "toyota-corolla", "source_text": "DTC P0420", "page_number": 2},
+        ),
+        ManualChunk(
+            id="p0420-generic",
+            text="P0420 generic",
+            metadata={"vehicle_id": "toyota-corolla", "source_text": "P0420 generic", "page_number": 3},
+        ),
+        make_chunk("toyota-corolla", "保养周期"),
+        make_chunk("toyota-corolla", "燃油液位"),
+        make_chunk("toyota-corolla", "雨刷维护"),
+        make_chunk("toyota-corolla", "座椅调节"),
+    ]
+    store.upsert(chunks)
+    set_vector_results(store, chunks[:4], [0.2, 0.4, 0.6, 1.3])
+    return chunks
+
+
+def seed_threshold_before_limit_fixture(store) -> None:
+    chunks = [
+        ManualChunk(
+            id="too-distant-dtc",
+            text="DTC generic",
+            metadata={"vehicle_id": "toyota-corolla", "source_text": "DTC generic", "page_number": 1},
+        ),
+        ManualChunk(
+            id="p0420-decoy",
+            text="P0420 generic",
+            metadata={"vehicle_id": "toyota-corolla", "source_text": "P0420 generic", "page_number": 2},
+        ),
+        ManualChunk(
+            id="dtc-p0420",
+            text="DTC P0420",
+            metadata={"vehicle_id": "toyota-corolla", "source_text": "DTC P0420", "page_number": 3},
+        ),
+        make_chunk("toyota-corolla", "保养周期"),
+        make_chunk("toyota-corolla", "燃油液位"),
+        make_chunk("toyota-corolla", "雨刷维护"),
+        make_chunk("toyota-corolla", "座椅调节"),
+        make_chunk("toyota-corolla", "警告灯说明"),
+    ]
+    store.upsert(chunks)
+    set_vector_results(store, chunks[:3], [0.6, 0.4, 0.4])
+
+
 def test_query_never_returns_chunks_for_another_vehicle(store):
     store.upsert([
         make_chunk("toyota-corolla", "轮胎压力警告"),
@@ -178,81 +251,36 @@ def test_retrieve_evidence_returns_empty_when_all_results_are_insufficient(store
 
 
 def test_hybrid_retrieval_promotes_exact_keyword_match_over_vector_order(store):
-    store.upsert(
-        [
-            ManualChunk(
-                id="vector-first",
-                text="发动机故障诊断提示",
-                metadata={"vehicle_id": "toyota-corolla", "source_text": "发动机故障诊断提示", "page_number": 1},
-            ),
-            ManualChunk(
-                id="dtc-generic",
-                text="DTC generic",
-                metadata={"vehicle_id": "toyota-corolla", "source_text": "DTC generic", "page_number": 2},
-            ),
-            ManualChunk(
-                id="dtc-p0420",
-                text="DTC P0420",
-                metadata={"vehicle_id": "toyota-corolla", "source_text": "DTC P0420", "page_number": 2},
-            ),
-            ManualChunk(
-                id="p0420-generic",
-                text="P0420 generic",
-                metadata={"vehicle_id": "toyota-corolla", "source_text": "P0420 generic", "page_number": 3},
-            ),
-            make_chunk("toyota-corolla", "保养周期"),
-            make_chunk("toyota-corolla", "燃油液位"),
-            make_chunk("toyota-corolla", "雨刷维护"),
-            make_chunk("toyota-corolla", "座椅调节"),
-        ]
-    )
-    store.collection.query = lambda **_: {
-        "ids": [["vector-first", "dtc-generic", "dtc-p0420", "p0420-generic"]],
-        "documents": [["发动机故障诊断提示", "DTC generic", "DTC P0420", "P0420 generic"]],
-        "metadatas": [[
-            {"vehicle_id": "toyota-corolla", "source_text": "发动机故障诊断提示", "page_number": 1},
-            {"vehicle_id": "toyota-corolla", "source_text": "DTC generic", "page_number": 2},
-            {"vehicle_id": "toyota-corolla", "source_text": "DTC P0420", "page_number": 2},
-            {"vehicle_id": "toyota-corolla", "source_text": "P0420 generic", "page_number": 3},
-        ]],
-        "distances": [[0.2, 0.4, 0.6, 0.8]],
-    }
+    seed_keyword_promotion_fixture(store)
 
     assert retrieve_evidence("toyota-corolla", "DTC P0420", store=store)[0].id == "dtc-p0420"
 
 
-def test_hybrid_retrieval_discards_fused_chunks_beyond_distance_threshold(store):
-    store.upsert([make_chunk("toyota-corolla", "轮胎")])
-    store.collection.query = lambda **_: {
-        "ids": [["toyota-corolla-轮胎"]],
-        "documents": [["轮胎"]],
-        "metadatas": [[{"vehicle_id": "toyota-corolla", "source_text": "轮胎", "page_number": 1}]],
-        "distances": [[0.6]],
-    }
+def test_hybrid_retrieval_filters_fused_candidates_before_applying_limit(store):
+    seed_threshold_before_limit_fixture(store)
 
     results = retrieve_evidence(
         "toyota-corolla",
-        "轮胎",
-        options=RetrievalOptions(minimum_distance=0.5),
+        "DTC P0420",
+        options=RetrievalOptions(limit=1, minimum_distance=0.5),
         store=store,
     )
 
-    assert results == []
+    assert [chunk.id for chunk in results] == ["dtc-p0420"]
 
 
 def test_baseline_retrieval_preserves_vector_order_and_distance_filter(store):
-    store.upsert(
-        [
-            make_chunk("toyota-corolla", "vector-first"),
-            make_chunk("toyota-corolla", "DTC P0420"),
-        ]
-    )
+    seed_keyword_promotion_fixture(store)
 
     results = retriever.retrieve_baseline_evidence(
         "toyota-corolla", "DTC P0420", store=store
     )
 
-    assert [chunk.id for chunk in results] == ["toyota-corolla-vector-first"]
+    assert [chunk.id for chunk in results] == [
+        "vector-first",
+        "dtc-generic",
+        "dtc-p0420",
+    ]
 
 
 def test_query_returns_empty_without_loading_an_embedding_model_for_an_empty_collection(
