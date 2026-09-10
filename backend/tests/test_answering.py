@@ -88,6 +88,84 @@ def same_page_evidence():
 
 
 @pytest.fixture
+def same_page_different_manual_evidence():
+    return [
+        RetrievedChunk(
+            id="corolla-page-187",
+            text="卡罗拉轮胎压力说明。",
+            metadata={
+                "vehicle_id": "toyota-corolla",
+                "manual_title": "2024 卡罗拉用户手册",
+                "chapter_title": "轮胎",
+                "page_number": 187,
+            },
+            distance=0.2,
+        ),
+        RetrievedChunk(
+            id="camry-page-187",
+            text="凯美瑞轮胎压力说明。",
+            metadata={
+                "vehicle_id": "toyota-corolla",
+                "manual_title": "2024 凯美瑞用户手册",
+                "chapter_title": "轮胎",
+                "page_number": 187,
+            },
+            distance=0.3,
+        ),
+    ]
+
+
+@pytest.fixture
+def ranked_multi_page_evidence():
+    return [
+        RetrievedChunk(
+            id="first-page-10",
+            text="第 10 页的第一段。",
+            metadata={
+                "vehicle_id": "toyota-corolla",
+                "manual_title": "2024 卡罗拉用户手册",
+                "chapter_title": "轮胎",
+                "page_number": 10,
+            },
+            distance=0.1,
+        ),
+        RetrievedChunk(
+            id="second-page-10",
+            text="第 10 页的第二段。",
+            metadata={
+                "vehicle_id": "toyota-corolla",
+                "manual_title": "2024 卡罗拉用户手册",
+                "chapter_title": "轮胎",
+                "page_number": 10,
+            },
+            distance=0.2,
+        ),
+        RetrievedChunk(
+            id="page-12",
+            text="第 12 页的段落。",
+            metadata={
+                "vehicle_id": "toyota-corolla",
+                "manual_title": "2024 卡罗拉用户手册",
+                "chapter_title": "轮胎",
+                "page_number": 12,
+            },
+            distance=0.3,
+        ),
+        RetrievedChunk(
+            id="page-15",
+            text="第 15 页的段落。",
+            metadata={
+                "vehicle_id": "toyota-corolla",
+                "manual_title": "2024 卡罗拉用户手册",
+                "chapter_title": "轮胎",
+                "page_number": 15,
+            },
+            distance=0.4,
+        ),
+    ]
+
+
+@pytest.fixture
 def client():
     return SimpleNamespace(
         chat=SimpleNamespace(
@@ -192,6 +270,31 @@ def test_answer_deduplicates_selected_chunks_from_same_manual_page(
     assert len(result.citations) == 1
 
 
+def test_answer_keeps_same_page_number_from_different_manuals(
+    service, corolla, same_page_different_manual_evidence
+):
+    service.client.chat.completions.create = lambda **_: SimpleNamespace(
+        choices=[
+            SimpleNamespace(
+                message=SimpleNamespace(
+                    content='{"answer":"检查轮胎","steps":[],"warnings":[],"citation_ids":["corolla-page-187","camry-page-187"]}'
+                )
+            )
+        ]
+    )
+
+    result = service.answer_question(
+        "胎压警告是什么意思？", corolla, same_page_different_manual_evidence
+    )
+
+    assert [
+        (citation.manual_title, citation.page_number) for citation in result.citations
+    ] == [
+        ("2024 卡罗拉用户手册", 187),
+        ("2024 凯美瑞用户手册", 187),
+    ]
+
+
 @pytest.mark.parametrize("citation_ids", [None, [], ["not-in-evidence"]])
 def test_answer_falls_back_to_unique_evidence_pages_when_citation_ids_are_unusable(
     service, corolla, same_page_evidence, citation_ids
@@ -206,6 +309,24 @@ def test_answer_falls_back_to_unique_evidence_pages_when_citation_ids_are_unusab
     result = service.answer_question("胎压警告是什么意思？", corolla, same_page_evidence)
 
     assert [citation.page_number for citation in result.citations] == [187]
+
+
+@pytest.mark.parametrize("citation_ids", [None, ["not-in-evidence"]])
+def test_answer_fallback_keeps_every_unique_evidence_page_in_rank_order(
+    service, corolla, ranked_multi_page_evidence, citation_ids
+):
+    response = {"answer": "检查轮胎", "steps": [], "warnings": []}
+    if citation_ids is not None:
+        response["citation_ids"] = citation_ids
+    service.client.chat.completions.create = lambda **_: SimpleNamespace(
+        choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps(response)))]
+    )
+
+    result = service.answer_question(
+        "胎压警告是什么意思？", corolla, ranked_multi_page_evidence
+    )
+
+    assert [citation.page_number for citation in result.citations] == [10, 12, 15]
 
 
 def test_missing_api_key_raises_a_safe_configuration_error(corolla, evidence):
