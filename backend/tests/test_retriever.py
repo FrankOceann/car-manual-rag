@@ -144,6 +144,26 @@ def test_retrieve_evidence_returns_empty_when_selected_chapter_has_no_candidates
     assert results == []
 
 
+def test_retrieve_evidence_applies_chapter_scope_before_top_k_limit(store):
+    store.upsert(
+        [
+            make_chunk("toyota-corolla", "保养周期", chapter="保养"),
+            make_chunk("toyota-corolla", "轮胎压力", chapter="轮胎"),
+        ]
+    )
+
+    results = retrieve_evidence(
+        "toyota-corolla",
+        "轮胎压力",
+        options=RetrievalOptions(
+            limit=1, chapter_titles={"轮胎"}, minimum_distance=2.0
+        ),
+        store=store,
+    )
+
+    assert [chunk.text for chunk in results] == ["轮胎压力"]
+
+
 def test_retrieve_evidence_returns_empty_when_all_results_are_insufficient(store):
     store.upsert([make_chunk("toyota-corolla", "轮胎压力警告")])
     store.collection.query = lambda **_: {
