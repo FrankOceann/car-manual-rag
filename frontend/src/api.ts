@@ -10,6 +10,9 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 
 export const getVehicles = () => request<Vehicle[]>("/vehicles");
 
+export const getManualChapters = (vehicleId: string) =>
+  request<string[]>(`/manuals/${vehicleId}/chapters`);
+
 export const askQuestion = (
   vehicleId: string,
   question: string,
