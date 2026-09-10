@@ -10,6 +10,7 @@ dependencies = [
     "openai",
     "pydantic-settings",
     "pypdf",
+    "pyyaml",
     "rank-bm25",
     "sentence-transformers",
     "uvicorn[standard]",

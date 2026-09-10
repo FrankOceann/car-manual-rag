@@ -1,0 +1,90 @@
+# Manually checked against the approved local PDFs and imported chapter metadata, 2026-09-10.
+# expected_pages uses 1-based PDF physical pages, not the printed page numbers.
+# Honda PDF pages 189/449/656/657/724/742 = printed 187/447/654/655/722/740.
+# Toyota PDF pages 16/17/18 = printed 224/225/226.
+# expected_chapters records imported labels; never use ground truth as retrieval filters.
+- id: civic-trunk-opener
+  vehicle_id: honda-civic
+  question: 如何使用驾驶员车门上的按钮打开思域后备箱？
+  expected_pages: [189]
+  expected_chapters: ["第 189 页"]
+  should_grounded: true
+- id: civic-trailer-towing
+  vehicle_id: honda-civic
+  question: 思域是否可以牵引拖车，或者被房车拖着行驶？
+  expected_pages: [449]
+  expected_chapters: ["第 449 页"]
+  should_grounded: true
+- id: civic-engine-oil-grade
+  vehicle_id: honda-civic
+  question: 思域推荐使用什么粘度和认证的发动机机油？是否需要机油添加剂？
+  expected_pages: [656]
+  expected_chapters: ["第 656 页"]
+  should_grounded: true
+- id: civic-oil-check-wait
+  vehicle_id: honda-civic
+  question: 检查思域机油液位前应该把车停在哪里，熄火后等待多久？
+  expected_pages: [657]
+  expected_chapters: ["第 657 页"]
+  should_grounded: true
+- id: civic-jump-start-voltage
+  vehicle_id: honda-civic
+  question: 思域蓄电池没电时，跨接启动应使用多少伏的辅助电池？
+  expected_pages: [724]
+  expected_chapters: ["第 724 页"]
+  should_grounded: true
+- id: civic-emergency-towing
+  vehicle_id: honda-civic
+  question: 思域需要紧急拖车且无法释放驻车制动时，应该使用哪种运输设备？
+  expected_pages: [742]
+  expected_chapters: ["第 742 页"]
+  should_grounded: true
+- id: toyota-emergency-stop-purpose
+  vehicle_id: toyota-corolla
+  question: 卡罗拉紧急驾驶停止系统在驾驶员失去驾驶能力时有什么作用，能否用于疲劳驾驶？
+  expected_pages: [16]
+  expected_chapters: ["第 16 页"]
+  should_grounded: true
+- id: toyota-emergency-stop-conditions
+  vehicle_id: toyota-corolla
+  question: 卡罗拉紧急驾驶停止系统对 LTA 开启状态和最低车速有什么启动条件？
+  expected_pages: [17]
+  expected_chapters: ["第 17 页"]
+  should_grounded: true
+- id: toyota-emergency-stop-cancel
+  vehicle_id: toyota-corolla
+  question: 卡罗拉紧急驾驶停止系统运行时，驾驶员进行哪些操作可以取消系统运行？
+  expected_pages: [17]
+  expected_chapters: ["第 17 页"]
+  should_grounded: true
+- id: toyota-emergency-stop-hold
+  vehicle_id: toyota-corolla
+  question: 卡罗拉紧急驾驶停止系统停车保持阶段，驻车制动、蜂鸣器和危险警告灯会如何工作？
+  expected_pages: [18]
+  expected_chapters: ["第 18 页"]
+  should_grounded: true
+# No BYD manual is imported. These must return zero evidence, irrespective of other vehicles.
+- id: byd-tire-pressure-refusal
+  vehicle_id: byd-seal
+  question: 比亚迪海豹的标准轮胎气压是多少？
+  expected_pages: []
+  expected_chapters: []
+  should_grounded: false
+- id: byd-charging-refusal
+  vehicle_id: byd-seal
+  question: 比亚迪海豹无法开始充电时，手册规定如何排查？
+  expected_pages: []
+  expected_chapters: []
+  should_grounded: false
+- id: byd-towing-refusal
+  vehicle_id: byd-seal
+  question: 比亚迪海豹需要紧急拖车时应该使用哪种运输设备？
+  expected_pages: []
+  expected_chapters: []
+  should_grounded: false
+- id: byd-driver-assistance-refusal
+  vehicle_id: byd-seal
+  question: 比亚迪海豹的车道辅助系统在什么条件下会退出？
+  expected_pages: []
+  expected_chapters: []
+  should_grounded: false

@@ -3,6 +3,7 @@
 backend/.env
 backend/.venv/
 backend/data/chroma/
+backend/data/eval-reports/
 backend/data/models/
 backend/data/manuals/*.pdf
 __pycache__/
