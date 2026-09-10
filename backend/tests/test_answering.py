@@ -1,3 +1,4 @@
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -27,6 +28,62 @@ def evidence():
             },
             distance=0.2,
         )
+    ]
+
+
+@pytest.fixture
+def two_chunk_evidence():
+    return [
+        RetrievedChunk(
+            id="chunk-1",
+            text="轮胎压力警告灯亮起时，请检查所有轮胎压力。",
+            metadata={
+                "vehicle_id": "toyota-corolla",
+                "manual_title": "2024 卡罗拉用户手册",
+                "chapter_title": "轮胎",
+                "page_number": 1,
+            },
+            distance=0.2,
+        ),
+        RetrievedChunk(
+            id="chunk-2",
+            text="轮胎压力警告灯持续亮起时，请联系服务人员。",
+            metadata={
+                "vehicle_id": "toyota-corolla",
+                "manual_title": "2024 卡罗拉用户手册",
+                "chapter_title": "轮胎",
+                "page_number": 2,
+            },
+            distance=0.3,
+        ),
+    ]
+
+
+@pytest.fixture
+def same_page_evidence():
+    return [
+        RetrievedChunk(
+            id="chunk-1",
+            text="先检查轮胎压力。",
+            metadata={
+                "vehicle_id": "toyota-corolla",
+                "manual_title": "2024 卡罗拉用户手册",
+                "chapter_title": "轮胎",
+                "page_number": 187,
+            },
+            distance=0.2,
+        ),
+        RetrievedChunk(
+            id="chunk-2",
+            text="随后确认轮胎没有损伤。",
+            metadata={
+                "vehicle_id": "toyota-corolla",
+                "manual_title": "2024 卡罗拉用户手册",
+                "chapter_title": "轮胎",
+                "page_number": 187,
+            },
+            distance=0.3,
+        ),
     ]
 
 
@@ -71,6 +128,84 @@ def test_grounded_response_contains_citations_from_evidence(service, corolla, ev
     assert result.grounded is True
     assert result.citations[0].page_number == evidence[0].metadata["page_number"]
     assert result.citations[0].excerpt == evidence[0].text
+
+
+def test_answer_prompt_exposes_chunk_ids_and_requests_citation_ids(
+    service, corolla, evidence
+):
+    captured = {}
+
+    def complete(**kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    message=SimpleNamespace(
+                        content='{"answer":"检查轮胎","steps":[],"warnings":[],"citation_ids":["chunk-1"]}'
+                    )
+                )
+            ]
+        )
+
+    service.client.chat.completions.create = complete
+
+    service.answer_question("胎压警告是什么意思？", corolla, evidence)
+
+    prompt = captured["messages"][0]["content"]
+    assert '"chunk_id": "chunk-1"' in prompt
+    assert "citation_ids" in prompt
+
+
+def test_answer_uses_only_model_selected_citation_ids(
+    service, corolla, two_chunk_evidence
+):
+    service.client.chat.completions.create = lambda **_: SimpleNamespace(
+        choices=[
+            SimpleNamespace(
+                message=SimpleNamespace(
+                    content='{"answer":"检查轮胎","steps":[],"warnings":[],"citation_ids":["chunk-2"]}'
+                )
+            )
+        ]
+    )
+
+    result = service.answer_question("胎压警告是什么意思？", corolla, two_chunk_evidence)
+
+    assert [citation.page_number for citation in result.citations] == [2]
+
+
+def test_answer_deduplicates_selected_chunks_from_same_manual_page(
+    service, corolla, same_page_evidence
+):
+    service.client.chat.completions.create = lambda **_: SimpleNamespace(
+        choices=[
+            SimpleNamespace(
+                message=SimpleNamespace(
+                    content='{"answer":"检查轮胎","steps":[],"warnings":[],"citation_ids":["chunk-1","chunk-2"]}'
+                )
+            )
+        ]
+    )
+
+    result = service.answer_question("胎压警告是什么意思？", corolla, same_page_evidence)
+
+    assert len(result.citations) == 1
+
+
+@pytest.mark.parametrize("citation_ids", [None, [], ["not-in-evidence"]])
+def test_answer_falls_back_to_unique_evidence_pages_when_citation_ids_are_unusable(
+    service, corolla, same_page_evidence, citation_ids
+):
+    response = {"answer": "检查轮胎", "steps": [], "warnings": []}
+    if citation_ids is not None:
+        response["citation_ids"] = citation_ids
+    service.client.chat.completions.create = lambda **_: SimpleNamespace(
+        choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps(response)))]
+    )
+
+    result = service.answer_question("胎压警告是什么意思？", corolla, same_page_evidence)
+
+    assert [citation.page_number for citation in result.citations] == [187]
 
 
 def test_missing_api_key_raises_a_safe_configuration_error(corolla, evidence):

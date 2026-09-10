@@ -51,7 +51,7 @@ class AnswerService:
             answer=parsed["answer"],
             steps=parsed["steps"],
             warnings=parsed["warnings"],
-            citations=_citations_from_evidence(evidence),
+            citations=_citations_from_evidence(evidence, parsed["citation_ids"]),
             grounded=True,
         )
 
@@ -68,6 +68,7 @@ def answer_question(
 def _system_prompt(vehicle: Vehicle, evidence: list[RetrievedChunk]) -> str:
     excerpts = [
         {
+            "chunk_id": chunk.id,
             "manual_title": chunk.metadata.get("manual_title"),
             "chapter_title": chunk.metadata.get("chapter_title"),
             "page_number": chunk.metadata.get("page_number"),
@@ -79,13 +80,14 @@ def _system_prompt(vehicle: Vehicle, evidence: list[RetrievedChunk]) -> str:
         "你是车辆手册助手。只可依据下方提供的手册摘录回答；不得编造数值、步骤、"
         "部件状态或任何未在摘录中出现的程序。若摘录不能支持回答，请明确说明。"
         "使用中性、安全的语言，不要建议危险操作。只返回 JSON 对象，且只能包含 "
-        '"answer"（字符串）、"steps"（字符串数组）和 "warnings"（字符串数组）。'
+        '"answer"（字符串）、"steps"（字符串数组）、"warnings"（字符串数组）和 '
+        '"citation_ids"（仅列出支持回答的 chunk_id 的字符串数组）。'
         f"\n车型：{vehicle.brand}{vehicle.model} {vehicle.year}\n手册摘录："
         f"{json.dumps(excerpts, ensure_ascii=False)}"
     )
 
 
-def _parse_content(content: Any) -> dict[str, str | list[str]] | None:
+def _parse_content(content: Any) -> dict[str, Any] | None:
     if not isinstance(content, str):
         return None
     try:
@@ -105,7 +107,17 @@ def _parse_content(content: Any) -> dict[str, str | list[str]] | None:
         or not all(isinstance(item, str) for item in warnings)
     ):
         return None
-    return {"answer": answer, "steps": steps, "warnings": warnings}
+    citation_ids = parsed.get("citation_ids")
+    if not isinstance(citation_ids, list) or not all(
+        isinstance(citation_id, str) for citation_id in citation_ids
+    ):
+        citation_ids = []
+    return {
+        "answer": answer,
+        "steps": steps,
+        "warnings": warnings,
+        "citation_ids": citation_ids,
+    }
 
 
 def _completion_content(completion: Any) -> Any | None:
@@ -116,16 +128,37 @@ def _completion_content(completion: Any) -> Any | None:
     return getattr(message, "content", None)
 
 
-def _citations_from_evidence(evidence: list[RetrievedChunk]) -> list[Citation]:
-    return [
-        Citation(
-            manual_title=str(chunk.metadata["manual_title"]),
-            chapter_title=str(chunk.metadata["chapter_title"]),
-            page_number=int(chunk.metadata["page_number"]),
-            excerpt=chunk.text,
-        )
-        for chunk in evidence
+def _citations_from_evidence(
+    evidence: list[RetrievedChunk], citation_ids: list[str]
+) -> list[Citation]:
+    evidence_by_id = {chunk.id: chunk for chunk in evidence}
+    selected_evidence = [
+        evidence_by_id[citation_id]
+        for citation_id in citation_ids
+        if citation_id in evidence_by_id
     ]
+    if not selected_evidence:
+        selected_evidence = evidence
+
+    citations = []
+    seen_pages = set()
+    for chunk in selected_evidence:
+        page_key = (
+            str(chunk.metadata["manual_title"]),
+            int(chunk.metadata["page_number"]),
+        )
+        if page_key in seen_pages:
+            continue
+        seen_pages.add(page_key)
+        citations.append(
+            Citation(
+                manual_title=page_key[0],
+                chapter_title=str(chunk.metadata["chapter_title"]),
+                page_number=page_key[1],
+                excerpt=chunk.text,
+            )
+        )
+    return citations
 
 
 def _safe_response(answer: str) -> ChatResponse:
