@@ -3,6 +3,17 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 from app.rag.store import ManualStore, RetrievedChunk
+from app.auth import current_user
+from app.models import User
+
+
+@pytest.fixture(autouse=True)
+def authenticated_legacy_route_contract(monkeypatch):
+    # These tests isolate the established RAG contract; enterprise tests exercise real auth and DB.
+    app.dependency_overrides[current_user] = lambda: User(id="test", username="reader", role="reader", active=True)
+    monkeypatch.setattr("app.api.routes.active_version_ids", lambda _: None)
+    yield
+    app.dependency_overrides.pop(current_user, None)
 
 
 def sample_evidence() -> list[RetrievedChunk]:

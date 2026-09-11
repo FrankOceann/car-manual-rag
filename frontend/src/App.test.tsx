@@ -11,6 +11,9 @@ describe("App", () => {
     vi.stubGlobal(
       "fetch",
       vi.fn((input: RequestInfo | URL) => {
+        if (String(input).endsWith("/auth/login")) {
+          return Promise.resolve(new Response(JSON.stringify({ access_token: "reader-token", token_type: "bearer", user: { id: "u1", username: "reader", role: "reader", active: true } })));
+        }
         if (String(input).endsWith("/vehicles")) {
           return Promise.resolve(
             new Response(JSON.stringify([{ id: "honda-civic", brand: "本田", model: "思域", year: 2024 }])),
@@ -42,6 +45,9 @@ describe("App", () => {
   it("requires a vehicle before asking and renders returned citations", async () => {
     const user = userEvent.setup();
     render(<App />);
+    await user.type(screen.getByLabelText("用户名"), "reader");
+    await user.type(screen.getByLabelText("密码"), "password123");
+    await user.click(screen.getByRole("button", { name: "登录" }));
 
     expect(await screen.findByLabelText("车型")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "开始查询" })).toBeDisabled();
@@ -57,6 +63,9 @@ describe("App", () => {
   it("loads vehicle chapters and lets an example question populate the input", async () => {
     const user = userEvent.setup();
     render(<App />);
+    await user.type(screen.getByLabelText("用户名"), "reader");
+    await user.type(screen.getByLabelText("密码"), "password123");
+    await user.click(screen.getByRole("button", { name: "登录" }));
 
     await user.selectOptions(await screen.findByLabelText("车型"), "honda-civic");
     expect(await screen.findByRole("checkbox", { name: "第 657 页" })).toBeInTheDocument();

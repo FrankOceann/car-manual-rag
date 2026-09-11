@@ -381,7 +381,7 @@ def test_embedding_model_uses_the_project_local_cache_folder(monkeypatch, tmp_pa
     captured: dict[str, object] = {}
 
     class FakeSentenceTransformer:
-        def __init__(self, model_name, *, cache_folder):
+        def __init__(self, model_name, *, cache_folder, device, local_files_only):
             captured["model_name"] = model_name
             captured["cache_folder"] = cache_folder
 

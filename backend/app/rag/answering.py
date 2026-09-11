@@ -34,6 +34,8 @@ class AnswerService:
         client = self.client or OpenAI(
             base_url=self.settings.deepseek_base_url,
             api_key=self.settings.deepseek_api_key,
+            timeout=self.settings.deepseek_timeout,
+            max_retries=1,
         )
         completion = client.chat.completions.create(
             model=self.settings.deepseek_model,
@@ -142,7 +144,7 @@ def _citations_from_evidence(
     seen_pages = set()
     for chunk in selected_evidence:
         page_key = (
-            str(chunk.metadata["manual_title"]),
+            str(chunk.metadata.get("version_id") or chunk.metadata["manual_title"]),
             int(chunk.metadata["page_number"]),
         )
         if page_key in seen_pages:
@@ -150,7 +152,9 @@ def _citations_from_evidence(
         seen_pages.add(page_key)
         citations.append(
             Citation(
-                manual_title=page_key[0],
+                manual_title=str(chunk.metadata["manual_title"]),
+                manual_id=chunk.metadata.get("manual_id"),
+                version_id=chunk.metadata.get("version_id"),
                 chapter_title=str(chunk.metadata["chapter_title"]),
                 page_number=page_key[1],
                 excerpt=chunk.text,

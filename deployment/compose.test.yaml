@@ -1,0 +1,9 @@
+# Test-only ports. Never include this override in the application deployment.
+services:
+  postgres:
+    ports: ["127.0.0.1:15432:5432"]
+  redis:
+    ports: ["127.0.0.1:16379:6379"]
+  chroma:
+    ports: ["127.0.0.1:18000:8000"]
+

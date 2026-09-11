@@ -1,0 +1,84 @@
+name: CI
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: backend/requirements.lock
+      - run: python -m pip install --extra-index-url https://download.pytorch.org/whl/cpu -r requirements.lock
+        working-directory: backend
+      - run: python -m pytest -q tests --ignore=tests/integration
+        working-directory: backend
+        env:
+          JWT_SECRET: ci-only-secret-at-least-32-characters-long
+          HF_HUB_OFFLINE: '1'
+          TRANSFORMERS_OFFLINE: '1'
+      - run: python -m unittest discover -s deployment -p 'test_*.py'
+  frontend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm test -- --run
+      - run: npm run build
+        env:
+          VITE_API_BASE_URL: /api
+  service-integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      COMPOSE_PROJECT_NAME: rag-ci
+      POSTGRES_USER: rag
+      POSTGRES_DB: rag
+      POSTGRES_PASSWORD: ci-only-database-password
+      JWT_SECRET: ci-only-secret-at-least-32-characters-long
+      DATABASE_URL: postgresql+psycopg://rag:ci-only-database-password@127.0.0.1:15432/rag
+      REDIS_URL: redis://127.0.0.1:16379/0
+      CHROMA_HOST: 127.0.0.1
+      CHROMA_PORT: '18000'
+      RUN_SERVICE_TESTS: '1'
+      HF_HUB_OFFLINE: '1'
+      TRANSFORMERS_OFFLINE: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: backend/requirements.lock
+      - run: python -m pip install --extra-index-url https://download.pytorch.org/whl/cpu -r requirements.lock
+        working-directory: backend
+      - run: docker compose -f compose.yaml -f deployment/compose.test.yaml config --quiet
+      - run: docker compose -f compose.yaml -f deployment/compose.test.yaml up -d --wait postgres redis chroma
+      - run: python -m pytest -q tests/integration
+        working-directory: backend
+      - name: Build deployable images and enforce CPU torch
+        run: docker compose build api nginx
+      - name: Container logs on failure
+        if: failure()
+        run: docker compose -f compose.yaml -f deployment/compose.test.yaml logs --no-color --tail 150
+      - name: Stop disposable CI services
+        if: always()
+        run: docker compose -f compose.yaml -f deployment/compose.test.yaml down

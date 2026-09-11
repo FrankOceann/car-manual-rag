@@ -1,0 +1,161 @@
+name: ${COMPOSE_PROJECT_NAME:-car-manual-rag}
+
+x-backend: &backend
+  image: ${COMPOSE_PROJECT_NAME:-car-manual-rag}-backend:local
+  build:
+    context: .
+    dockerfile: backend/Dockerfile
+  init: true
+  restart: unless-stopped
+  environment: &backend-environment
+    DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-rag}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:-rag}
+    REDIS_URL: redis://redis:6379/0
+    CHROMA_HOST: chroma
+    CHROMA_PORT: "8000"
+    STORAGE_PATH: /app/data/manuals
+    MODEL_PATH: /app/data/models/embedding
+    JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in .env}
+    DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+    HF_HUB_OFFLINE: "1"
+    TRANSFORMERS_OFFLINE: "1"
+  volumes:
+    - manuals:/app/data/manuals
+    - models:/app/data/models
+  logging:
+    driver: json-file
+    options:
+      max-size: 10m
+      max-file: "3"
+
+services:
+  nginx:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    image: ${COMPOSE_PROJECT_NAME:-car-manual-rag}-frontend:local
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8080:80"
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  api:
+    <<: *backend
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      chroma:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/ready', timeout=5)"]
+      interval: 15s
+      timeout: 10s
+      start_period: 120s
+      retries: 5
+
+  worker:
+    <<: *backend
+    command: ["celery", "-A", "app.tasks:celery_app", "worker", "--loglevel=INFO", "--concurrency=1", "--hostname=worker@%h"]
+    stop_grace_period: 20m
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      chroma:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A app.tasks:celery_app inspect ping --destination worker@$$HOSTNAME --timeout 5 | grep -q pong"]
+      interval: 30s
+      timeout: 10s
+      start_period: 60s
+      retries: 3
+
+  beat:
+    <<: *backend
+    command: ["celery", "-A", "app.tasks:celery_app", "beat", "--loglevel=INFO", "--schedule=/app/data/beat/celerybeat-schedule"]
+    volumes:
+      - manuals:/app/data/manuals
+      - models:/app/data/models
+      - beat:/app/data/beat
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
+  migrate:
+    <<: *backend
+    restart: "no"
+    command: ["alembic", "upgrade", "head"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  prepare-model:
+    <<: *backend
+    profiles: [setup]
+    restart: "no"
+    command: ["python", "-m", "scripts.prepare_model"]
+    environment:
+      <<: *backend-environment
+      HF_HUB_OFFLINE: "0"
+      TRANSFORMERS_OFFLINE: "0"
+
+  postgres:
+    image: postgres:17.11-bookworm
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-rag}
+      POSTGRES_USER: ${POSTGRES_USER:-rag}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    volumes:
+      - postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 5s
+      timeout: 5s
+      retries: 15
+
+  redis:
+    image: redis:7.4.11-alpine3.21
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec"]
+    volumes:
+      - redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 15
+
+  chroma:
+    image: chromadb/chroma:1.5.9
+    restart: unless-stopped
+    environment:
+      ANONYMIZED_TELEMETRY: "FALSE"
+    volumes:
+      - chroma:/data
+    healthcheck:
+      # The 1.5.9 Rust image includes bash, but neither curl nor Python.
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/8000; printf 'GET /api/v2/heartbeat HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n' >&3; read -r status <&3; [[ \"$$status\" == *' 200 '* ]]"]
+      interval: 10s
+      timeout: 5s
+      start_period: 20s
+      retries: 15
+
+volumes:
+  postgres:
+  redis:
+  chroma:
+  manuals:
+  models:
+  beat:

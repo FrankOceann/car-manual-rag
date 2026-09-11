@@ -13,3 +13,9 @@ frontend/dist/
 frontend/*.tsbuildinfo
 frontend/vite.config.js
 frontend/vite.config.d.ts
+.env
+backend/data/app.db*
+backend/data/manuals/**
+backend/data/backups/
+deployment/backups/
+backend/data/test-*/

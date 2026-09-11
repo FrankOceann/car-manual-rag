@@ -11,6 +11,8 @@ class Vehicle(BaseModel):
 
 
 class Citation(BaseModel):
+    manual_id: str | None = None
+    version_id: str | None = None
     manual_title: str
     chapter_title: str
     page_number: int
