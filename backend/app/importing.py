@@ -167,6 +167,9 @@ def process_job(job_id: str):
             job = session.scalar(select(ImportJob).where(ImportJob.id == job_id).with_for_update())
             if job.lease_token != token or job.status != "embedding":
                 raise LeaseLost()
+            # Finish reconciliation under the job lock before making this version visible.
+            # A failed cleanup follows the same retry path as a failed vector write.
+            store.reconcile_version(version.id, {chunk.id for chunk in chunks})
             version = session.get(ManualVersion, job.version_id)
             manual = session.scalar(select(Manual).where(Manual.id == version.manual_id).with_for_update())
             active = session.get(ManualVersion, manual.active_version_id) if manual.active_version_id else None

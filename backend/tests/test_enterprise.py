@@ -10,6 +10,13 @@ from sqlalchemy.orm import sessionmaker
 from app.main import app
 
 
+class ImportStoreStub:
+    # Upsert-focused tests have no stale collection; reconciliation is exercised below
+    # with the real ManualStore and an embedded Chroma collection.
+    def reconcile_version(self, version_id, chunk_ids):
+        pass
+
+
 @pytest.fixture
 def session(tmp_path):
     from app.db import Base
@@ -160,7 +167,7 @@ def test_import_activation_failure_disable_and_original(system, monkeypatch):
     from app.management import active_version_ids
     client, admin, reader = system
     chunks = {}
-    class Store:
+    class Store(ImportStoreStub):
         def upsert(self, values):
             chunks.update({chunk.id: chunk for chunk in values})
     monkeypatch.setattr("app.importing.ManualStore", Store)
@@ -188,7 +195,7 @@ def test_failed_embedding_never_activates_partial_version(system, monkeypatch):
     from app.importing import process_job
     from app.management import active_version_ids
     client, admin, _ = system
-    class BrokenStore:
+    class BrokenStore(ImportStoreStub):
         def upsert(self, values):
             raise ConnectionError("temporary")
     monkeypatch.setattr("app.importing.ManualStore", BrokenStore)
@@ -236,7 +243,7 @@ def test_duplicate_workers_claim_job_once(system, monkeypatch):
     client, admin, _ = system
     entered, release = Event(), Event()
     stored = []
-    class SlowStore:
+    class SlowStore(ImportStoreStub):
         def upsert(self, chunks):
             entered.set()
             assert release.wait(10)
@@ -264,7 +271,7 @@ def test_older_slow_import_cannot_replace_newer_success(system, monkeypatch):
     from app.management import active_version_ids
     client, admin, _ = system
     entered, release = Event(), Event()
-    class Store:
+    class Store(ImportStoreStub):
         def upsert(self, chunks):
             if chunks[0].text == "old":
                 entered.set()
@@ -310,7 +317,7 @@ def test_inflight_answer_discards_disabled_version(system, monkeypatch):
     from app.rag.store import RetrievedChunk
     from app.schemas import ChatResponse
     client, admin, reader = system
-    class Store:
+    class Store(ImportStoreStub):
         def upsert(self, chunks):
             pass
     monkeypatch.setattr("app.importing.ManualStore", Store)
@@ -350,7 +357,7 @@ def test_transient_chroma_server_error_requeues_job(system, monkeypatch, failure
     import httpx
     from app.importing import process_job
     client, admin, _ = system
-    class UnavailableStore:
+    class UnavailableStore(ImportStoreStub):
         def upsert(self, chunks):
             if failure_kind == "wrapped_connection":
                 try:
@@ -421,7 +428,7 @@ def test_import_ocr_assets_and_reprocessing_are_idempotent(system, monkeypatch, 
 
     client, admin, _ = system
     vectors = {}
-    class Store:
+    class Store(ImportStoreStub):
         def upsert(self, chunks):
             assert len(chunks) <= 64
             vectors.update({chunk.id: chunk for chunk in chunks})
@@ -476,7 +483,7 @@ def test_image_ocr_failure_does_not_fail_text_import(system, monkeypatch):
 
     client, admin, _ = system
     chunks = []
-    class Store:
+    class Store(ImportStoreStub):
         def upsert(self, values):
             chunks.extend(values)
     def fail(self, data):
@@ -548,7 +555,7 @@ def test_page_ocr_failure_still_imports_asset_ocr(system, monkeypatch):
 
     client, admin, _ = system
     chunks = []
-    class Store:
+    class Store(ImportStoreStub):
         def upsert(self, values):
             chunks.extend(values)
     def recognize(self, data):
@@ -572,7 +579,7 @@ def test_text_import_survives_visual_extraction_error_or_disabled_ocr(system, mo
 
     client, admin, _ = system
     chunks = []
-    class Store:
+    class Store(ImportStoreStub):
         def upsert(self, values):
             chunks.extend(values)
     def fail(*args, **kwargs):
@@ -608,7 +615,7 @@ def test_ocr_retry_after_partial_vector_write_reuses_assets_and_batches(system, 
 
     client, admin, _ = system
     vectors, batch_sizes = {}, []
-    class Store:
+    class Store(ImportStoreStub):
         def upsert(self, chunks):
             batch_sizes.append(len(chunks))
             if len(batch_sizes) == 2:
@@ -631,3 +638,68 @@ def test_ocr_retry_after_partial_vector_write_reuses_assets_and_batches(system, 
     with session_factory()() as session:
         assert list(session.scalars(select(ManualAsset.id))) == first_asset_ids
         assert session.get(ManualVersion, data["version_id"]).chunk_count == 78
+
+
+@pytest.mark.parametrize("retry_page_text", ["", "Replacement page OCR"])
+@pytest.mark.parametrize("cleanup_failure", [False, True])
+def test_ocr_retry_removes_stale_vectors_without_touching_other_versions(
+        system, monkeypatch, retry_page_text, cleanup_failure):
+    import chromadb
+    from app.db import session_factory
+    from app.importing import process_job
+    from app.management import active_version_ids
+    from app.models import ManualVersion, new_id
+    from app.rag.store import ManualStore
+    from app.rag.visual import RapidOCRClient
+
+    client, admin, _ = system
+    collection = chromadb.EphemeralClient().create_collection("retry-" + new_id())
+    class Embedding:
+        def encode(self, values):
+            return [[1.0, 0.0] for _ in values]
+    class Store(ManualStore):
+        batches = 0
+        interrupt = False
+        fail_cleanup = False
+        def upsert(self, chunks):
+            self.batches += 1
+            if self.interrupt and self.batches == 2:
+                raise ConnectionError("Interrupted vector write")
+            super().upsert(chunks)
+        def reconcile_version(self, version_id, chunk_ids):
+            if self.fail_cleanup:
+                self.fail_cleanup = False
+                raise ConnectionError("Interrupted cleanup")
+            super().reconcile_version(version_id, chunk_ids)
+    store = Store(collection=collection, embedding_model=Embedding())
+    monkeypatch.setattr("app.importing.ManualStore", lambda: store)
+    old = upload(client, admin, text="Active manual evidence", title="Illustrated").json()
+    process_job(old["job_id"])
+    old_vectors = collection.get(where={"version_id": old["version_id"]}, include=["documents", "metadatas"])
+    assert old_vectors["documents"] == ["Active manual evidence"]
+    page_text = "page OCR " * 10000
+    def recognize(self, data):
+        from PIL import Image
+        with Image.open(BytesIO(data)) as image:
+            return "Image label" if image.size == (20, 10) else page_text
+    monkeypatch.setattr(RapidOCRClient, "recognize", recognize)
+    new = upload_image_pdf(client, admin, text="")
+    store.batches, store.interrupt = 0, True
+    process_job(new["job_id"])
+    assert client.get("/jobs/" + new["job_id"], headers=admin).json()["status"] == "queued"
+    assert len(collection.get(where={"version_id": new["version_id"]})["ids"]) == 64
+    assert active_version_ids("toyota-corolla") == {old["version_id"]}
+    page_text, store.interrupt = retry_page_text, False
+    store.fail_cleanup = cleanup_failure
+    if cleanup_failure:
+        process_job(new["job_id"])
+        assert client.get("/jobs/" + new["job_id"], headers=admin).json()["status"] == "queued"
+        assert active_version_ids("toyota-corolla") == {old["version_id"]}
+    process_job(new["job_id"])
+    assert client.get("/jobs/" + new["job_id"], headers=admin).json()["status"] == "succeeded"
+    current = collection.get(where={"version_id": new["version_id"]}, include=["documents", "metadatas"])
+    assert sorted(current["documents"]) == sorted(["Image label"] + ([retry_page_text] if retry_page_text else []))
+    with session_factory()() as session:
+        assert session.get(ManualVersion, new["version_id"]).chunk_count == len(current["ids"])
+    assert collection.get(where={"version_id": old["version_id"]}, include=["documents", "metadatas"]) == old_vectors
+    assert active_version_ids("toyota-corolla") == {new["version_id"]}

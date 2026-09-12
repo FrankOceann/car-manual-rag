@@ -43,6 +43,8 @@ class VectorCollection(Protocol):
         include: list[str],
     ) -> dict[str, list[Any]]: ...
 
+    def delete(self, *, ids: list[str], where: dict[str, str]) -> None: ...
+
 
 @dataclass(frozen=True)
 class RetrievedChunk:
@@ -105,6 +107,13 @@ class ManualStore:
             metadatas=[chunk.metadata for chunk in chunks],
             embeddings=self._embedding_model().encode([chunk.text for chunk in chunks]),
         )
+
+    def reconcile_version(self, version_id: str, chunk_ids: set[str]) -> None:
+        """Remove evidence omitted by a successful retry, confined to this version."""
+        result = self.collection.get(where={"version_id": version_id}, include=[])
+        stale_ids = [item_id for item_id in result["ids"] if item_id not in chunk_ids]
+        for offset in range(0, len(stale_ids), 64):
+            self.collection.delete(ids=stale_ids[offset:offset + 64], where={"version_id": version_id})
 
     def list_chunks(
         self, vehicle_id: str, chapter_titles: set[str] | None = None
