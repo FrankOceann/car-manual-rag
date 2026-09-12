@@ -10,14 +10,14 @@ export class ApiError extends Error {
 }
 
 export function createApi(token?: string, onUnauthorized?: (error: ApiError) => void) {
-  async function response(path: string, options: RequestInit = {}) {
+  async function response(path: string, options: RequestInit = {}, requestToken = token) {
     const headers = new Headers(options.headers);
-    if (token) headers.set("Authorization", `Bearer ${token}`);
+    if (requestToken) headers.set("Authorization", `Bearer ${requestToken}`);
     const result = await fetch(`${API_BASE_URL}${path}`, { ...options, headers });
     if (!result.ok) {
       const body = await result.json().catch(() => ({}));
       const error = new ApiError(result.status, typeof body.detail === "string" ? body.detail : `请求失败（${result.status}）`, body.request_id || result.headers.get("X-Request-ID") || "");
-      if (result.status === 401 && token) onUnauthorized?.(error);
+      if (result.status === 401 && requestToken) onUnauthorized?.(error);
       throw error;
     }
     return result;
@@ -41,6 +41,8 @@ export function createApi(token?: string, onUnauthorized?: (error: ApiError) => 
     createUser: (username: string, password: string, role: User["role"]) => request<User>("/admin/users", json("POST", { username, password, role })),
     setActive: (id: string, active: boolean) => request<User>(`/admin/users/${encodeURIComponent(id)}`, json("PATCH", { active })),
     pdf: async (manualId: string, versionId: string) => (await response(`/manuals/${encodeURIComponent(manualId)}/versions/${encodeURIComponent(versionId)}/file`)).blob(),
+    openAsset: async (manualId: string, versionId: string, assetId: string, assetToken: string): Promise<Blob> =>
+      (await response(`/manuals/${encodeURIComponent(manualId)}/versions/${encodeURIComponent(versionId)}/assets/${encodeURIComponent(assetId)}/file`, {}, assetToken)).blob(),
   };
 }
 export type Api = ReturnType<typeof createApi>;

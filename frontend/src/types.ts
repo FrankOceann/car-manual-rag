@@ -4,6 +4,15 @@ export type Session = { access_token: string; token_type: "bearer"; user: User }
 export type Job = { id: string; status: "queued" | "parsing" | "embedding" | "succeeded" | "failed"; error: string | null; attempts: number };
 export type ManualVersion = { id: string; sha256: string; page_count: number; chunk_count: number; created_at: string; job: Job | null };
 export type Manual = { id: string; vehicle_id: string; title: string; source: string; enabled: boolean; active_version_id: string | null; versions: ManualVersion[] };
-export type Citation = { manual_id?: string; version_id?: string; manual_title: string; chapter_title: string; page_number: number; excerpt: string };
+export type Citation = {
+  manual_id?: string;
+  version_id?: string;
+  asset_id?: string;
+  evidence_type?: "pdf_text" | "page_ocr" | "image_ocr" | "image_description";
+  manual_title: string;
+  chapter_title: string;
+  page_number: number;
+  excerpt: string;
+};
 export type ChatResponse = { answer: string; steps: string[]; warnings: string[]; citations: Citation[]; grounded: boolean };
 export type ChatRequest = { vehicle_id: string; question: string; chapter_titles?: string[] };

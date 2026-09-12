@@ -59,13 +59,13 @@ function Workspace({ session, expire, logout }: { session: Session; expire: (tok
       {session.user.role === "admin" && <><button aria-current={page === "manuals" ? "page" : undefined} onClick={() => setPage("manuals")}>手册管理</button><button aria-current={page === "users" ? "page" : undefined} onClick={() => setPage("users")}>用户管理</button></>}
     </nav>
     {error && <p className="error" role="alert">{error}</p>}
-    {page === "chat" && <Query api={api} vehicles={vehicles} />}
+    {page === "chat" && <Query api={api} token={session.access_token} vehicles={vehicles} />}
     {session.user.role === "admin" && page === "manuals" && <ManualAdmin api={api} vehicles={vehicles} />}
     {session.user.role === "admin" && page === "users" && <UserAdmin api={api} />}
   </>;
 }
 
-function Query({ api, vehicles }: { api: Api; vehicles: Vehicle[] }) {
+function Query({ api, token, vehicles }: { api: Api; token: string; vehicles: Vehicle[] }) {
   const [vehicleId, setVehicleId] = useState("");
   const [question, setQuestion] = useState("");
   const [chapters, setChapters] = useState<string[]>([]);
@@ -101,7 +101,19 @@ function Query({ api, vehicles }: { api: Api; vehicles: Vehicle[] }) {
     if (!citation.manual_id || !citation.version_id) return;
     const current = ++pdfGeneration.current;
     setPdfBusy(true); setError("");
-    try { const blob = await api.pdf(citation.manual_id, citation.version_id); if (current === pdfGeneration.current) setPdf({ blob, page: citation.page_number }); }
+    try {
+      if (citation.asset_id) {
+        const blob = await api.openAsset(citation.manual_id, citation.version_id, citation.asset_id, token);
+        if (current === pdfGeneration.current) {
+          const url = URL.createObjectURL(blob);
+          window.open(url, "_blank", "noopener,noreferrer");
+          URL.revokeObjectURL(url);
+        }
+      } else {
+        const blob = await api.pdf(citation.manual_id, citation.version_id);
+        if (current === pdfGeneration.current) setPdf({ blob, page: citation.page_number });
+      }
+    }
     catch (caught) { if (current === pdfGeneration.current) setError(errorMessage(caught)); }
     finally { if (current === pdfGeneration.current) setPdfBusy(false); }
   };

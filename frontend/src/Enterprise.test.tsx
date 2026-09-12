@@ -2,6 +2,7 @@ import { act, cleanup, fireEvent, render, screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
+import { CitationCard } from "./components/CitationCard";
 
 const reader = { id: "u1", username: "reader", role: "reader", active: true };
 const admin = { ...reader, username: "admin", role: "admin" };
@@ -111,6 +112,45 @@ describe("enterprise assistant", () => {
     expect(new Headers(calls.find(c => c.path.endsWith("/file"))?.init?.headers).get("Authorization")).toBe("Bearer test-token");
     await user.click(screen.getByRole("button", { name: "退出登录" }));
     expect(revoke).toHaveBeenCalledWith("blob:manual-test");
+  });
+  it("labels image evidence and sends image citations to the asset callback", async () => {
+    const citation = { manual_id: "m1", version_id: "v1", asset_id: "asset 1", evidence_type: "image_ocr" as const,
+      manual_title: "思域手册", chapter_title: "仪表盘", page_number: 12, excerpt: "机油压力警告灯" };
+    const onOpen = vi.fn();
+    const onOpenAsset = vi.fn();
+    const user = userEvent.setup();
+    render(<CitationCard citation={citation} onOpen={onOpen} onOpenAsset={onOpenAsset} busy={false} />);
+    expect(screen.getByText("来源：图片 OCR")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "查看关联图片" }));
+    expect(onOpenAsset).toHaveBeenCalledWith(citation);
+    expect(onOpen).not.toHaveBeenCalled();
+  });
+  it("keeps ordinary citations on the PDF-page callback", async () => {
+    const citation = answer.citations[0];
+    const onOpen = vi.fn();
+    const onOpenAsset = vi.fn();
+    const user = userEvent.setup();
+    render(<CitationCard citation={citation} onOpen={onOpen} onOpenAsset={onOpenAsset} busy={false} />);
+    expect(screen.getByText("来源：PDF 文本")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "查看 PDF 第 657 页" }));
+    expect(onOpen).toHaveBeenCalledWith(citation);
+    expect(onOpenAsset).not.toHaveBeenCalled();
+  });
+  it("opens authenticated image assets in a new tab and releases their blob URL", async () => {
+    const imageAnswer = { ...answer, citations: [{ ...answer.citations[0], asset_id: "asset 1", evidence_type: "image_description" }] };
+    overrides["/chat"] = () => json(imageAnswer);
+    overrides["/manuals/m1/versions/v1/assets/asset%201/file"] = () => new Response(new Blob(["image"], { type: "image/png" }));
+    const createObjectURL = vi.fn(() => "blob:image-test");
+    const revokeObjectURL = vi.fn();
+    const open = vi.fn();
+    Object.defineProperty(URL, "createObjectURL", { configurable: true, value: createObjectURL });
+    Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: revokeObjectURL });
+    vi.stubGlobal("open", open);
+    render(<App />); const user = await query();
+    await user.click(await screen.findByRole("button", { name: "查看关联图片" }));
+    expect(new Headers(calls.find(c => c.path.includes("/assets/"))?.init?.headers).get("Authorization")).toBe("Bearer test-token");
+    expect(open).toHaveBeenCalledWith("blob:image-test", "_blank", "noopener,noreferrer");
+    expect(revokeObjectURL).toHaveBeenCalledWith("blob:image-test");
   });
   it("uploads manuals, displays errors, and retries failed jobs", async () => {
     supportUploadedFiles();
