@@ -62,6 +62,27 @@ def test_chunk_page_text_skips_blank_pages():
     ) == []
 
 
+def test_image_ocr_chunks_preserve_provenance_and_do_not_collide():
+    from app.rag.chunking import chunk_evidence_text
+
+    arguments = dict(text="  image\ntext  " * 200, page_number=3,
+                     vehicle=get_vehicle("toyota-corolla"), manual_title="Demo",
+                     chapter_title="Page 3")
+    image = chunk_evidence_text(**arguments, evidence_type="image_ocr", asset_id="asset-a")
+    repeated = chunk_evidence_text(**arguments, evidence_type="image_ocr", asset_id="asset-a")
+    other = chunk_evidence_text(**arguments, evidence_type="image_ocr", asset_id="asset-b")
+    page = chunk_evidence_text(**arguments, evidence_type="page_ocr")
+    pdf = chunk_page_text(arguments["text"], 3, arguments["vehicle"], "Demo", "Page 3")
+    assert image == repeated
+    assert len(image) > 1
+    assert image[0].text == pdf[0].text
+    assert image[0].metadata == pdf[0].metadata | {"evidence_type": "image_ocr", "asset_id": "asset-a"}
+    assert "asset_id" not in page[0].metadata
+    assert len({c.id for group in [image, other, page, pdf] for c in group}) == sum(
+        len(group) for group in [image, other, page, pdf])
+    assert chunk_evidence_text(**(arguments | {"text": " \n "}), evidence_type="page_ocr") == []
+
+
 def test_extract_chunks_uses_pdf_pages_and_default_page_chapter_titles(monkeypatch, tmp_path):
     vehicle = get_vehicle("toyota-corolla")
     assert vehicle is not None

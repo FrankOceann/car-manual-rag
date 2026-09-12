@@ -1,5 +1,6 @@
 import hashlib
 import logging
+import mimetypes
 import os
 from pathlib import Path
 from tempfile import NamedTemporaryFile
@@ -15,7 +16,7 @@ from app.auth import admin_user, current_user
 from app.catalog import get_vehicle
 from app.config import Settings
 from app.db import get_session, session_factory
-from app.models import ImportJob, Manual, ManualVersion, new_id, utcnow
+from app.models import ImportJob, Manual, ManualAsset, ManualVersion, new_id, utcnow
 
 router = APIRouter()
 log = logging.getLogger("rag")
@@ -186,4 +187,22 @@ def original_pdf(manual_id: str, version_id: str, session: Session = Depends(get
     if not path.is_relative_to(root) or not path.is_file():
         raise HTTPException(404, "原文文件不可用。")
     return FileResponse(path, media_type="application/pdf", filename=f"{version.id}.pdf",
+                        content_disposition_type="inline", headers={"Cache-Control": "private, no-store"})
+
+
+@router.get("/manuals/{manual_id}/versions/{version_id}/assets/{asset_id}/file",
+            dependencies=[Depends(current_user)])
+def asset_file(manual_id: str, version_id: str, asset_id: str, session: Session = Depends(get_session)):
+    version = session.get(ManualVersion, version_id)
+    asset = session.get(ManualAsset, asset_id)
+    if version is None or version.manual_id != manual_id or asset is None or asset.version_id != version_id:
+        raise HTTPException(404, "图片不存在。")
+    root = Path(Settings().storage_path).resolve()
+    path = (root / asset.file_path).resolve()
+    if not path.is_relative_to(root) or not path.is_file():
+        raise HTTPException(404, "图片不可用。")
+    media_type = mimetypes.guess_type(path.name)[0]
+    if media_type is None or not media_type.startswith("image/"):
+        raise HTTPException(404, "图片不可用。")
+    return FileResponse(path, media_type=media_type, filename=path.name,
                         content_disposition_type="inline", headers={"Cache-Control": "private, no-store"})

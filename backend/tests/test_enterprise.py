@@ -284,7 +284,8 @@ def test_older_slow_import_cannot_replace_newer_success(system, monkeypatch):
     assert active_version_ids("toyota-corolla") == {new["version_id"]}
 
 
-def test_recovery_fences_stale_worker_and_caps_attempts(system):
+@pytest.mark.parametrize("status", ["embedding", "ocr"])
+def test_recovery_fences_stale_worker_and_caps_attempts(system, status):
     from app.importing import recover_jobs, _progress, LeaseLost
     from app.models import ImportJob, utcnow
     from app.db import session_factory
@@ -294,7 +295,7 @@ def test_recovery_fences_stale_worker_and_caps_attempts(system):
     with session_factory()() as session:
         for data, attempts in [(first, 1), (exhausted, 4)]:
             job = session.get(ImportJob, data["job_id"])
-            job.status, job.attempts, job.lease_token = "embedding", attempts, "stale"
+            job.status, job.attempts, job.lease_token = status, attempts, "stale"
             job.updated_at = utcnow() - timedelta(hours=1)
         session.commit()
     recover_jobs()
@@ -386,3 +387,247 @@ def test_repeated_http_stores_share_one_client_and_close_it(monkeypatch):
     assert len(created) == 1
     store.close_shared_clients()
     assert created[0].closed
+
+
+def image_pdf_bytes(text="Manual text"):
+    import pymupdf
+    from PIL import Image
+
+    image = BytesIO()
+    Image.new("RGB", (20, 10), "white").save(image, format="PNG")
+    with pymupdf.open() as document:
+        page = document.new_page(width=300, height=300)
+        if text:
+            page.insert_text((20, 30), text)
+        page.insert_image(pymupdf.Rect(20, 50, 120, 100), stream=image.getvalue())
+        return document.tobytes()
+
+
+def upload_image_pdf(client, admin, text="Manual text"):
+    return client.post("/admin/manuals", headers=admin,
+                       data={"vehicle_id": "toyota-corolla", "title": "Illustrated", "source": "Self-authored"},
+                       files={"file": ("images.pdf", image_pdf_bytes(text), "application/pdf")}).json()
+
+
+@pytest.mark.parametrize("text", ["Manual text", ""])
+def test_import_ocr_assets_and_reprocessing_are_idempotent(system, monkeypatch, text):
+    from pathlib import Path
+    from sqlalchemy import select
+    from app.config import Settings
+    from app.db import session_factory
+    from app.importing import process_job
+    from app.models import ImportJob, ManualAsset, ManualVersion
+    from app.rag.visual import RapidOCRClient
+
+    client, admin, _ = system
+    vectors = {}
+    class Store:
+        def upsert(self, chunks):
+            assert len(chunks) <= 64
+            vectors.update({chunk.id: chunk for chunk in chunks})
+    def recognize(self, data):
+        from PIL import Image
+        with Image.open(BytesIO(data)) as image:
+            return "Image tire label" if image.size == (20, 10) else "Scanned manual page"
+    monkeypatch.setattr("app.importing.ManualStore", Store)
+    monkeypatch.setattr(RapidOCRClient, "recognize", recognize)
+    data = upload_image_pdf(client, admin, text)
+    process_job(data["job_id"])
+    first_ids = set(vectors)
+    assert client.get("/jobs/" + data["job_id"], headers=admin).json()["status"] == "succeeded"
+    with session_factory()() as session:
+        assets = list(session.scalars(select(ManualAsset)))
+        assert len(assets) == 1
+        asset = assets[0]
+        asset_id = asset.id
+        assert asset.ocr_text == "Image tire label"
+        assert asset.processing_status == "succeeded"
+        root = Path(Settings().storage_path).resolve()
+        path = (root / asset.file_path).resolve()
+        assert path.is_relative_to(root) and path.is_file()
+        assert data["version_id"] in asset.file_path
+        import hashlib
+        assert asset.sha256 == hashlib.sha256(path.read_bytes()).hexdigest()
+        session.get(ImportJob, data["job_id"]).status = "queued"
+        session.commit()
+    process_job(data["job_id"])
+    with session_factory()() as session:
+        assert [a.id for a in session.scalars(select(ManualAsset))] == [asset_id]
+        assert session.get(ManualVersion, data["version_id"]).chunk_count == len(first_ids)
+    assert set(vectors) == first_ids
+    assert {c.metadata.get("evidence_type", "pdf_text") for c in vectors.values()} == {
+        "image_ocr", "pdf_text" if text else "page_ocr"}
+    for chunk in vectors.values():
+        assert chunk.id.startswith(data["version_id"] + "-")
+        assert chunk.metadata["vehicle_id"] == "toyota-corolla"
+        assert chunk.metadata["manual_id"] == data["manual_id"]
+        assert chunk.metadata["version_id"] == data["version_id"]
+        assert chunk.metadata["page_number"] == 1
+        if chunk.metadata.get("evidence_type") == "image_ocr":
+            assert chunk.metadata["asset_id"] == asset_id
+
+
+def test_image_ocr_failure_does_not_fail_text_import(system, monkeypatch):
+    from sqlalchemy import select
+    from app.db import session_factory
+    from app.importing import process_job
+    from app.models import ManualAsset
+    from app.rag.visual import RapidOCRClient
+
+    client, admin, _ = system
+    chunks = []
+    class Store:
+        def upsert(self, values):
+            chunks.extend(values)
+    def fail(self, data):
+        raise RuntimeError("OCR unavailable")
+    monkeypatch.setattr("app.importing.ManualStore", Store)
+    monkeypatch.setattr(RapidOCRClient, "recognize", fail)
+    data = upload_image_pdf(client, admin)
+    process_job(data["job_id"])
+    assert client.get("/jobs/" + data["job_id"], headers=admin).json()["status"] == "succeeded"
+    assert [c.text for c in chunks] == ["Manual text"]
+    with session_factory()() as session:
+        asset = session.scalar(select(ManualAsset))
+        assert asset is not None
+        assert asset.processing_status == "failed" and asset.error
+
+
+def test_asset_file_requires_auth_and_matching_ids_and_safe_path(system, tmp_path):
+    from pathlib import Path
+    from app.config import Settings
+    from app.db import session_factory
+    from app.models import ManualAsset
+
+    client, admin, reader = system
+    first = upload(client, admin).json()
+    other = upload(client, admin, title="Other").json()
+    root = Path(Settings().storage_path)
+    (root / "asset.png").write_bytes(b"image data")
+    with session_factory()() as session:
+        asset = ManualAsset(version_id=first["version_id"], page_number=1, asset_index=0,
+                            sha256="a" * 64, file_path="asset.png", width=20, height=10,
+                            processing_status="succeeded")
+        session.add(asset)
+        session.commit()
+        asset_id = asset.id
+    path = f'/manuals/{first["manual_id"]}/versions/{first["version_id"]}/assets/{asset_id}/file'
+    assert client.get(path).status_code == 401
+    response = client.get(path, headers=reader)
+    assert response.status_code == 200 and response.content == b"image data"
+    assert response.headers["content-type"] == "image/png"
+    assert response.headers["content-disposition"].startswith("inline")
+    assert response.headers["cache-control"] == "private, no-store"
+    assert client.get(path.replace(first["manual_id"], other["manual_id"]), headers=reader).status_code == 404
+    assert client.get(path.replace(first["version_id"], other["version_id"]), headers=reader).status_code == 404
+    assert client.get(path.replace(asset_id, "missing"), headers=reader).status_code == 404
+    outside = tmp_path / "outside.png"
+    outside.write_bytes(b"private")
+    for unsafe_path in ["../outside.png", str(outside.resolve()), "missing.png"]:
+        with session_factory()() as session:
+            session.get(ManualAsset, asset_id).file_path = unsafe_path
+            session.commit()
+        assert client.get(path, headers=reader).status_code == 404
+
+
+def test_empty_ocr_pdf_keeps_no_text_failure(system, monkeypatch):
+    from app.importing import process_job
+    from app.rag.visual import RapidOCRClient
+
+    client, admin, _ = system
+    monkeypatch.setattr(RapidOCRClient, "recognize", lambda self, data: "")
+    data = upload_image_pdf(client, admin, text="")
+    process_job(data["job_id"])
+    job = client.get("/jobs/" + data["job_id"], headers=admin).json()
+    assert job["status"] == "failed" and job["error"] == "PDF 无可提取文本。"
+
+
+def test_page_ocr_failure_still_imports_asset_ocr(system, monkeypatch):
+    from app.importing import process_job
+    from app.rag.visual import RapidOCRClient
+
+    client, admin, _ = system
+    chunks = []
+    class Store:
+        def upsert(self, values):
+            chunks.extend(values)
+    def recognize(self, data):
+        from PIL import Image
+        with Image.open(BytesIO(data)) as image:
+            if image.size != (20, 10):
+                raise RuntimeError("Page recognition failed")
+        return "Readable image label"
+    monkeypatch.setattr("app.importing.ManualStore", Store)
+    monkeypatch.setattr(RapidOCRClient, "recognize", recognize)
+    data = upload_image_pdf(client, admin, text="")
+    process_job(data["job_id"])
+    assert client.get("/jobs/" + data["job_id"], headers=admin).json()["status"] == "succeeded"
+    assert [c.text for c in chunks] == ["Readable image label"]
+    assert chunks[0].metadata["evidence_type"] == "image_ocr"
+
+
+@pytest.mark.parametrize("ocr_enabled", [True, False])
+def test_text_import_survives_visual_extraction_error_or_disabled_ocr(system, monkeypatch, ocr_enabled):
+    from app.importing import process_job
+
+    client, admin, _ = system
+    chunks = []
+    class Store:
+        def upsert(self, values):
+            chunks.extend(values)
+    def fail(*args, **kwargs):
+        if not ocr_enabled:
+            pytest.fail("Disabled OCR must not extract images")
+        raise RuntimeError("Visual extraction failed")
+    monkeypatch.setenv("OCR_ENABLED", str(ocr_enabled).lower())
+    monkeypatch.setattr("app.importing.extract_visual_pages", fail)
+    monkeypatch.setattr("app.importing.ManualStore", Store)
+    data = upload(client, admin).json()
+    process_job(data["job_id"])
+    assert client.get("/jobs/" + data["job_id"], headers=admin).json()["status"] == "succeeded"
+    assert [c.text for c in chunks] == ["First manual text"]
+
+
+def test_asset_persistence_rejects_path_escape(session, tmp_path):
+    from app.importing import persist_visual_assets
+    from app.rag.visual import ExtractedAsset, VisualPage
+
+    version = make_version(session)
+    source = ExtractedAsset(1, 0, b"image", "../../outside.png", 20, 10)
+    with pytest.raises(ValueError):
+        persist_visual_assets(session, version, [VisualPage(1, "", [source])], tmp_path)
+    assert not (tmp_path / "assets").exists()
+
+
+def test_ocr_retry_after_partial_vector_write_reuses_assets_and_batches(system, monkeypatch):
+    from sqlalchemy import select
+    from app.db import session_factory
+    from app.importing import process_job
+    from app.models import ManualAsset, ManualVersion
+    from app.rag.visual import RapidOCRClient
+
+    client, admin, _ = system
+    vectors, batch_sizes = {}, []
+    class Store:
+        def upsert(self, chunks):
+            batch_sizes.append(len(chunks))
+            if len(batch_sizes) == 2:
+                raise ConnectionError("Interrupted vector write")
+            vectors.update({c.id: c for c in chunks})
+    monkeypatch.setattr("app.importing.ManualStore", Store)
+    monkeypatch.setattr(RapidOCRClient, "recognize", lambda self, data: "label " * 10000)
+    data = upload_image_pdf(client, admin)
+    process_job(data["job_id"])
+    assert client.get("/jobs/" + data["job_id"], headers=admin).json()["status"] == "queued"
+    assert len(vectors) == 64
+    with session_factory()() as session:
+        first_asset_ids = list(session.scalars(select(ManualAsset.id)))
+        assert len(first_asset_ids) == 1
+    process_job(data["job_id"])
+    assert client.get("/jobs/" + data["job_id"], headers=admin).json()["status"] == "succeeded"
+    # 77 overlapping OCR chunks plus the original PDF-text chunk.
+    assert batch_sizes == [64, 14, 64, 14]
+    assert len(vectors) == 78
+    with session_factory()() as session:
+        assert list(session.scalars(select(ManualAsset.id))) == first_asset_ids
+        assert session.get(ManualVersion, data["version_id"]).chunk_count == 78

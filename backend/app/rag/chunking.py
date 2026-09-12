@@ -58,6 +58,25 @@ def chunk_page_text(
     return chunks
 
 
+def chunk_evidence_text(
+    text: str,
+    *,
+    page_number: int,
+    vehicle: Vehicle,
+    manual_title: str,
+    chapter_title: str,
+    evidence_type: str,
+    asset_id: str | None = None,
+) -> list[ManualChunk]:
+    metadata = {"evidence_type": evidence_type}
+    if asset_id is not None:
+        metadata["asset_id"] = asset_id
+    prefix = evidence_type if asset_id is None else f"{evidence_type}-{asset_id}"
+    return [ManualChunk(id=f"{prefix}-{chunk.id}", text=chunk.text,
+                        metadata=chunk.metadata | metadata)
+            for chunk in chunk_page_text(text, page_number, vehicle, manual_title, chapter_title)]
+
+
 def extract_chunks(
     pdf_path: Path,
     vehicle: Vehicle,

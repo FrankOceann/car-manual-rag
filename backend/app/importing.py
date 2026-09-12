@@ -1,15 +1,18 @@
+import hashlib
 import logging
 from datetime import timedelta
 from pathlib import Path
+from uuid import NAMESPACE_URL, uuid5
 
 from sqlalchemy import select, update
 
 from app.catalog import get_vehicle
 from app.config import Settings
 from app.db import session_factory
-from app.models import ImportJob, Manual, ManualVersion, new_id, utcnow
-from app.rag.chunking import extract_chunks, ManualChunk
+from app.models import ImportJob, Manual, ManualAsset, ManualVersion, new_id, utcnow
+from app.rag.chunking import chunk_evidence_text, extract_chunks, ManualChunk
 from app.rag.store import ManualStore
+from app.rag.visual import RapidOCRClient, VisualPage, extract_visual_pages
 
 log = logging.getLogger("rag")
 MAX_ATTEMPTS = 4  # initial attempt plus three retries
@@ -22,6 +25,18 @@ class LeaseLost(Exception):
 
 class NoTextPDF(ValueError):
     pass
+
+
+class _PageOCRClient:
+    def __init__(self, client, job_id):
+        self.client, self.job_id = client, job_id
+
+    def recognize(self, image: bytes) -> str:
+        try:
+            return self.client.recognize(image)
+        except Exception as exc:
+            log.warning("page_ocr_failed", extra={"job_id": self.job_id, "error_type": type(exc).__name__})
+            return ""
 
 
 def transient_failure(error: Exception) -> bool:
@@ -44,10 +59,42 @@ def _progress(job_id, token, status):
     with session_factory()() as session:
         result = session.execute(update(ImportJob).where(
             ImportJob.id == job_id, ImportJob.lease_token == token,
-            ImportJob.status.in_(["parsing", "embedding"])).values(status=status, updated_at=utcnow()))
+            ImportJob.status.in_(["parsing", "ocr", "embedding"])).values(status=status, updated_at=utcnow()))
         session.commit()
         if result.rowcount != 1:
             raise LeaseLost()
+
+
+def persist_visual_assets(session, version, visual_pages: list[VisualPage], root: Path) -> list[ManualAsset]:
+    root = root.resolve()
+    # Serialize asset reuse within the version, including recovered worker attempts.
+    session.execute(select(ManualVersion).where(ManualVersion.id == version.id).with_for_update()).scalar_one()
+    assets = []
+    for page in visual_pages:
+        for extracted in page.assets:
+            digest = hashlib.sha256(extracted.data).hexdigest()
+            asset = session.scalar(select(ManualAsset).where(
+                ManualAsset.version_id == version.id, ManualAsset.page_number == extracted.page_number,
+                ManualAsset.asset_index == extracted.asset_index, ManualAsset.sha256 == digest))
+            if not extracted.suffix.isalnum():
+                raise ValueError("Invalid image suffix")
+            relative = Path("assets") / version.id / (
+                f"p{extracted.page_number}-a{extracted.asset_index}-{digest}.{extracted.suffix}")
+            path = (root / relative).resolve()
+            if not path.is_relative_to(root):
+                raise ValueError("Asset path escapes storage root")
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(extracted.data)
+            if asset is None:
+                asset = ManualAsset(
+                    id=str(uuid5(NAMESPACE_URL, f"{version.id}/{extracted.page_number}/{extracted.asset_index}/{digest}")),
+                    version_id=version.id, page_number=extracted.page_number, asset_index=extracted.asset_index,
+                    sha256=digest, file_path=relative.as_posix(), width=extracted.width, height=extracted.height,
+                    processing_status="pending")
+                session.add(asset)
+                session.flush()
+            assets.append(asset)
+    return assets
 
 
 def process_job(job_id: str):
@@ -63,12 +110,48 @@ def process_job(job_id: str):
         job = session.get(ImportJob, job_id)
         version = session.get(ManualVersion, job.version_id)
         manual = session.get(Manual, version.manual_id)
-        path = Path(Settings().storage_path).resolve() / version.file_path
+        settings = Settings()
+        root = Path(settings.storage_path).resolve()
+        path = root / version.file_path
     log.info("import_started", extra={"job_id": job_id})
     try:
         from pypdf import PdfReader
         page_count = len(PdfReader(path).pages)
-        raw = extract_chunks(path, get_vehicle(manual.vehicle_id), manual.title)
+        vehicle = get_vehicle(manual.vehicle_id)
+        raw = extract_chunks(path, vehicle, manual.title)
+        if settings.ocr_enabled:
+            _progress(job_id, token, "ocr")
+            ocr = RapidOCRClient()
+            try:
+                visual_pages = extract_visual_pages(path, ocr=_PageOCRClient(ocr, job_id), dpi=settings.ocr_render_dpi,
+                                                    run_page_ocr=lambda text: not text.strip())
+            except Exception as exc:
+                # Optional OCR/extraction must not discard usable PDF text.
+                log.warning("visual_extraction_failed", extra={"job_id": job_id, "error_type": type(exc).__name__})
+                visual_pages = []
+            with session_factory()() as session:
+                assets = persist_visual_assets(session, version, visual_pages, root)
+                session.commit()
+                extracted = [asset for page in visual_pages for asset in page.assets]
+                for asset, source in zip(assets, extracted):
+                    _progress(job_id, token, "ocr")
+                    try:
+                        asset.ocr_text = ocr.recognize(source.data)
+                        asset.processing_status, asset.error = "succeeded", None
+                    except Exception:
+                        asset.processing_status, asset.error = "failed", "图片 OCR 处理失败。"
+                    session.commit()
+                    if asset.ocr_text.strip():
+                        raw.extend(chunk_evidence_text(
+                            asset.ocr_text, page_number=asset.page_number, vehicle=vehicle,
+                            manual_title=manual.title, chapter_title=f"第 {asset.page_number} 页",
+                            evidence_type="image_ocr", asset_id=asset.id))
+            for page in visual_pages:
+                if page.page_ocr_text.strip():
+                    raw.extend(chunk_evidence_text(
+                        page.page_ocr_text, page_number=page.page_number, vehicle=vehicle,
+                        manual_title=manual.title, chapter_title=f"第 {page.page_number} 页",
+                        evidence_type="page_ocr"))
         if not raw:
             raise NoTextPDF("PDF 无可提取文本，请提供文字版 PDF。")
         chunks = [ManualChunk(
@@ -115,7 +198,7 @@ def recover_jobs():
     now = utcnow()
     with session_factory()() as session:
         stale = list(session.scalars(select(ImportJob).where(
-            ImportJob.status.in_(["parsing", "embedding"]),
+            ImportJob.status.in_(["parsing", "ocr", "embedding"]),
             ImportJob.updated_at < now - timedelta(seconds=LEASE_SECONDS)).with_for_update(skip_locked=True)))
         for job in stale:
             job.status = "queued" if job.attempts < MAX_ATTEMPTS else "failed"
