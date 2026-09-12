@@ -225,6 +225,7 @@ git commit -m "feat: import OCR evidence and manual images"
 
 **Files:**
 - Modify: `backend/app/rag/visual.py`
+- Modify: `backend/app/importing.py`
 - Modify: `backend/app/rag/answering.py`
 - Modify: `backend/app/schemas.py`
 - Modify: `backend/tests/test_answering.py`
@@ -257,7 +258,7 @@ Expected: FAIL because visual adapter and image-specific citation de-duplication
 
 - [ ] **Step 3: Implement optional adapter and citation handling**
 
-Validate visual settings before a request: if `VISION_ENABLED=true` but URL, model or key is missing, raise one explicit configuration error for the import job. Encode a PNG as a data URL and request a short neutral description that labels visible symbols, labels and diagram relationships but forbids repair instructions. On remote model failure, set the asset error and continue with OCR evidence. Include `evidence_type` and `asset_id` in the answer prompt but continue accepting only IDs present in retrieved evidence. Update citations to propagate these fields and use the new de-duplication key.
+Validate visual settings before a request: if `VISION_ENABLED=true` but URL, model or key is missing, raise one explicit configuration error for the import job. Encode a PNG as a data URL and request a short neutral description that labels visible symbols, labels and diagram relationships but forbids repair instructions. In `process_job`, call the adapter for each persisted image and turn each nonempty response into an `image_description` chunk. On remote model failure, set the asset error and continue with OCR evidence. Include `evidence_type` and `asset_id` in the answer prompt but continue accepting only IDs present in retrieved evidence. Update citations to propagate these fields and use the new de-duplication key.
 
 - [ ] **Step 4: Run focused tests to verify they pass**
 
@@ -267,7 +268,7 @@ Expected: PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add backend/app/rag/visual.py backend/app/rag/answering.py backend/app/schemas.py backend/tests/test_visual.py backend/tests/test_answering.py
+git add backend/app/rag/visual.py backend/app/importing.py backend/app/rag/answering.py backend/app/schemas.py backend/tests/test_visual.py backend/tests/test_answering.py
 git commit -m "feat: add optional visual descriptions to citations"
 ```
 
