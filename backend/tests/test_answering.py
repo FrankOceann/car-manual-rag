@@ -392,3 +392,36 @@ def test_incomplete_model_response_envelope_returns_an_ungrounded_response(
     assert result.grounded is False
     assert result.steps == []
     assert result.citations == []
+
+
+@pytest.mark.parametrize("selected", [True, False])
+def test_same_page_images_keep_separate_citations_and_model_origin(service, corolla, selected):
+    chunks = [RetrievedChunk(id=identifier, text="可见标签", metadata={
+        "manual_title": "Manual", "chapter_title": "Page 1", "page_number": 1,
+        "manual_id": "manual", "version_id": version, "asset_id": asset,
+        "evidence_type": kind, "model_generated": "true" if kind == "image_description" else "false",
+    }, distance=0.2) for identifier, version, asset, kind in [
+        ("image-a", "v1", "a", "image_description"),
+        ("image-b", "v1", "b", "image_ocr"),
+        ("image-a-again", "v1", "a", "image_description"),
+        ("new-version", "v2", "a", "image_description"),
+    ]]
+    captured = {}
+    def complete(**kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps({
+            "answer": "可见标签", "steps": [], "warnings": [],
+            "citation_ids": [c.id for c in chunks] if selected else [],
+        })))])
+    service.client.chat.completions.create = complete
+    result = service.answer_question("图上有什么？", corolla, chunks)
+    assert [(c.version_id, c.page_number, c.asset_id, c.evidence_type) for c in result.citations] == [
+        ("v1", 1, "a", "image_description"), ("v1", 1, "b", "image_ocr"),
+        ("v2", 1, "a", "image_description"),
+    ]
+    prompt = captured["messages"][0]["content"]
+    assert '"evidence_type": "image_description"' in prompt
+    assert '"asset_id": "b"' in prompt
+    assert '"version_id": "v2"' in prompt
+    assert '"model_generated": "true"' in prompt
+    assert "模型生成" in prompt and "原文" in prompt

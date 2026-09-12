@@ -74,6 +74,10 @@ def _system_prompt(vehicle: Vehicle, evidence: list[RetrievedChunk]) -> str:
             "manual_title": chunk.metadata.get("manual_title"),
             "chapter_title": chunk.metadata.get("chapter_title"),
             "page_number": chunk.metadata.get("page_number"),
+            "version_id": chunk.metadata.get("version_id"),
+            "asset_id": chunk.metadata.get("asset_id"),
+            "evidence_type": chunk.metadata.get("evidence_type", "pdf_text"),
+            "model_generated": chunk.metadata.get("model_generated", "false"),
             "excerpt": chunk.text,
         }
         for chunk in evidence
@@ -81,6 +85,8 @@ def _system_prompt(vehicle: Vehicle, evidence: list[RetrievedChunk]) -> str:
     return (
         "你是车辆手册助手。只可依据下方提供的手册摘录回答；不得编造数值、步骤、"
         "部件状态或任何未在摘录中出现的程序。若摘录不能支持回答，请明确说明。"
+        "image_description 是模型生成的图片描述，绝不是手册原文，只能用于辅助说明可见内容；"
+        "不得用它作为维修步骤、扭矩、零件号或安全操作的依据，引用时须明确标注为模型生成。"
         "使用中性、安全的语言，不要建议危险操作。只返回 JSON 对象，且只能包含 "
         '"answer"（字符串）、"steps"（字符串数组）、"warnings"（字符串数组）和 '
         '"citation_ids"（仅列出支持回答的 chunk_id 的字符串数组）。'
@@ -146,6 +152,7 @@ def _citations_from_evidence(
         page_key = (
             str(chunk.metadata.get("version_id") or chunk.metadata["manual_title"]),
             int(chunk.metadata["page_number"]),
+            str(chunk.metadata.get("asset_id") or ""),
         )
         if page_key in seen_pages:
             continue
@@ -155,6 +162,8 @@ def _citations_from_evidence(
                 manual_title=str(chunk.metadata["manual_title"]),
                 manual_id=chunk.metadata.get("manual_id"),
                 version_id=chunk.metadata.get("version_id"),
+                asset_id=chunk.metadata.get("asset_id"),
+                evidence_type=chunk.metadata.get("evidence_type", "pdf_text"),
                 chapter_title=str(chunk.metadata["chapter_title"]),
                 page_number=page_key[1],
                 excerpt=chunk.text,

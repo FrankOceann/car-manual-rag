@@ -12,7 +12,7 @@ from app.db import session_factory
 from app.models import ImportJob, Manual, ManualAsset, ManualVersion, new_id, utcnow
 from app.rag.chunking import chunk_evidence_text, extract_chunks, ManualChunk
 from app.rag.store import ManualStore
-from app.rag.visual import RapidOCRClient, VisualPage, extract_visual_pages
+from app.rag.visual import RapidOCRClient, VisualDescriber, VisionConfigurationError, VisualPage, extract_visual_pages
 
 log = logging.getLogger("rag")
 MAX_ATTEMPTS = 4  # initial attempt plus three retries
@@ -115,16 +115,17 @@ def process_job(job_id: str):
         path = root / version.file_path
     log.info("import_started", extra={"job_id": job_id})
     try:
+        describer = VisualDescriber(settings)
         from pypdf import PdfReader
         page_count = len(PdfReader(path).pages)
         vehicle = get_vehicle(manual.vehicle_id)
         raw = extract_chunks(path, vehicle, manual.title)
-        if settings.ocr_enabled:
+        if settings.ocr_enabled or settings.vision_enabled:
             _progress(job_id, token, "ocr")
-            ocr = RapidOCRClient()
+            ocr = RapidOCRClient() if settings.ocr_enabled else None
             try:
                 visual_pages = extract_visual_pages(path, ocr=_PageOCRClient(ocr, job_id), dpi=settings.ocr_render_dpi,
-                                                    run_page_ocr=lambda text: not text.strip())
+                                                    run_page_ocr=lambda text: settings.ocr_enabled and not text.strip())
             except Exception as exc:
                 # Optional OCR/extraction must not discard usable PDF text.
                 log.warning("visual_extraction_failed", extra={"job_id": job_id, "error_type": type(exc).__name__})
@@ -135,17 +136,33 @@ def process_job(job_id: str):
                 extracted = [asset for page in visual_pages for asset in page.assets]
                 for asset, source in zip(assets, extracted):
                     _progress(job_id, token, "ocr")
-                    try:
-                        asset.ocr_text = ocr.recognize(source.data)
-                        asset.processing_status, asset.error = "succeeded", None
-                    except Exception:
-                        asset.processing_status, asset.error = "failed", "图片 OCR 处理失败。"
+                    asset.ocr_text, asset.visual_description = "", None
+                    asset.processing_status, asset.error = "succeeded", None
+                    if ocr is not None:
+                        try:
+                            asset.ocr_text = ocr.recognize(source.data)
+                        except Exception:
+                            asset.processing_status, asset.error = "failed", "图片 OCR 处理失败。"
+                    if settings.vision_enabled:
+                        try:
+                            asset.visual_description = describer.describe(source.data) or None
+                        except Exception:
+                            asset.processing_status = "failed"
+                            asset.error = (asset.error or "") + "图片视觉描述处理失败。"
                     session.commit()
                     if asset.ocr_text.strip():
                         raw.extend(chunk_evidence_text(
                             asset.ocr_text, page_number=asset.page_number, vehicle=vehicle,
                             manual_title=manual.title, chapter_title=f"第 {asset.page_number} 页",
                             evidence_type="image_ocr", asset_id=asset.id))
+                    if asset.visual_description:
+                        descriptions = chunk_evidence_text(
+                            asset.visual_description, page_number=asset.page_number, vehicle=vehicle,
+                            manual_title=manual.title, chapter_title=f"第 {asset.page_number} 页",
+                            evidence_type="image_description", asset_id=asset.id)
+                        raw.extend(ManualChunk(id=chunk.id, text=chunk.text,
+                                               metadata=chunk.metadata | {"model_generated": "true"})
+                                   for chunk in descriptions)
             for page in visual_pages:
                 if page.page_ocr_text.strip():
                     raw.extend(chunk_evidence_text(
@@ -186,6 +203,7 @@ def process_job(job_id: str):
         # Retry only transient infrastructure failures; deterministic bad PDFs fail immediately.
         transient = transient_failure(exc)
         error = ("依赖连接失败，可重试。" if transient else
+                 str(exc) if isinstance(exc, VisionConfigurationError) else
                  "PDF 无可提取文本。" if isinstance(exc, NoTextPDF) else "处理失败，请检查 PDF 和本地模型配置。")
         with session_factory()() as session:
             job = session.scalar(select(ImportJob).where(
