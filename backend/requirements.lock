@@ -16,6 +16,8 @@ annotated-doc==0.0.5
     #   typer
 annotated-types==0.8.0
     # via pydantic
+antlr4-python3-runtime==4.9.3
+    # via omegaconf
 anyio==4.15.1
     # via
     #   httpx
@@ -73,9 +75,12 @@ cloudpickle==3.1.2
 colorama==0.4.6 ; (os_name != 'nt' and sys_platform == 'win32') or (os_name == 'nt' and sys_platform != 'darwin')
     # via
     #   build
+    #   colorlog
     #   pytest
     #   tqdm
     #   typer
+colorlog==6.12.0
+    # via rapidocr
 durationpy==0.11
     # via kubernetes
 fastapi==0.141.1
@@ -180,26 +185,38 @@ numpy==2.4.6 ; python_full_version < '3.12'
     # via
     #   chromadb
     #   onnxruntime
+    #   opencv-python
     #   rank-bm25
+    #   rapidocr
     #   scikit-learn
     #   scipy
     #   sentence-transformers
+    #   shapely
     #   transformers
 numpy==2.5.3 ; python_full_version >= '3.12'
     # via
     #   chromadb
     #   onnxruntime
+    #   opencv-python
     #   rank-bm25
+    #   rapidocr
     #   scikit-learn
     #   scipy
     #   sentence-transformers
+    #   shapely
     #   transformers
 oauthlib==3.3.1
     # via requests-oauthlib
+omegaconf==2.3.1
+    # via rapidocr
 onnxruntime==1.30.0
-    # via chromadb
+    # via
+    #   car-manual-rag-backend (pyproject.toml)
+    #   chromadb
 openai==3.13.0
     # via car-manual-rag-backend (pyproject.toml)
+opencv-python==5.0.0.93
+    # via rapidocr
 opentelemetry-api==1.44.0
     # via
     #   chromadb
@@ -232,6 +249,8 @@ packaging==26.3
     #   onnxruntime
     #   pytest
     #   transformers
+pillow==12.3.0
+    # via rapidocr
 pluggy==1.6.0
     # via pytest
 prompt-toolkit==3.0.53
@@ -251,6 +270,8 @@ psycopg-binary==3.3.5 ; implementation_name != 'pypy'
     # via psycopg
 pybase64==1.5.0
     # via chromadb
+pyclipper==1.4.0
+    # via rapidocr
 pycparser==3.0 ; implementation_name != 'PyPy'
     # via cffi
 pydantic==2.13.5
@@ -270,6 +291,8 @@ pygments==2.21.0
     #   pytest
     #   rich
 pyjwt==2.13.0
+    # via car-manual-rag-backend (pyproject.toml)
+pymupdf==1.28.2
     # via car-manual-rag-backend (pyproject.toml)
 pypdf==6.18.0
     # via car-manual-rag-backend (pyproject.toml)
@@ -299,9 +322,13 @@ pyyaml==6.0.3
     #   chromadb
     #   huggingface-hub
     #   kubernetes
+    #   omegaconf
+    #   rapidocr
     #   transformers
     #   uvicorn
 rank-bm25==0.2.2
+    # via car-manual-rag-backend (pyproject.toml)
+rapidocr==3.9.2
     # via car-manual-rag-backend (pyproject.toml)
 redis==6.4.0
     # via kombu
@@ -314,6 +341,7 @@ regex==2026.9.10
 requests==2.34.2
     # via
     #   kubernetes
+    #   rapidocr
     #   requests-oauthlib
 requests-oauthlib==2.0.0
     # via kubernetes
@@ -341,12 +369,15 @@ sentence-transformers==6.0.1
     # via car-manual-rag-backend (pyproject.toml)
 setuptools==84.0.0
     # via torch
+shapely==2.1.2
+    # via rapidocr
 shellingham==1.5.4
     # via typer
 six==1.17.0
     # via
     #   kubernetes
     #   python-dateutil
+    #   rapidocr
 sniffio==1.3.1
     # via openai
 sqlalchemy==2.0.52
@@ -374,6 +405,7 @@ tqdm==4.70.0
     # via
     #   chromadb
     #   huggingface-hub
+    #   rapidocr
     #   sentence-transformers
     #   transformers
 transformers==5.17.0
