@@ -3,8 +3,67 @@ from io import BytesIO
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import create_engine
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import sessionmaker
 
 from app.main import app
+
+
+@pytest.fixture
+def session(tmp_path):
+    from app.db import Base
+
+    engine = create_engine("sqlite:///" + str(tmp_path / "assets.db"))
+    Base.metadata.create_all(engine)
+    with sessionmaker(bind=engine)() as database_session:
+        yield database_session
+    Base.metadata.drop_all(engine)
+    engine.dispose()
+
+
+def make_version(session):
+    from app.models import Manual, ManualVersion
+
+    manual = Manual(vehicle_id="test-car", title="Test manual", source="test")
+    session.add(manual)
+    session.flush()
+    version = ManualVersion(manual_id=manual.id, sha256="b" * 64, file_path="manuals/test.pdf")
+    session.add(version)
+    session.commit()
+    return version
+
+
+def test_manual_asset_is_unique_within_a_version(session):
+    from app.models import ManualAsset
+
+    version = make_version(session)
+    session.add_all([
+        ManualAsset(version_id=version.id, page_number=2, asset_index=0, sha256="a" * 64,
+                    file_path="assets/a.png", width=20, height=10, processing_status="succeeded"),
+        ManualAsset(version_id=version.id, page_number=2, asset_index=0, sha256="a" * 64,
+                    file_path="assets/a.png", width=20, height=10, processing_status="succeeded"),
+    ])
+    with pytest.raises(IntegrityError):
+        session.commit()
+
+
+def test_ocr_defaults_do_not_require_credentials(monkeypatch):
+    from app.config import Settings
+
+    monkeypatch.delenv("VISION_API_KEY", raising=False)
+    settings = Settings()
+    assert settings.ocr_enabled is True
+    assert settings.ocr_language == "ch"
+    assert settings.vision_enabled is False
+
+
+def test_citation_defaults_to_pdf_text_without_asset():
+    from app.schemas import Citation
+
+    citation = Citation(manual_title="Test manual", chapter_title="Page 1", page_number=1, excerpt="text")
+    assert citation.asset_id is None
+    assert citation.evidence_type == "pdf_text"
 
 
 def test_anonymous_cannot_access_knowledge():

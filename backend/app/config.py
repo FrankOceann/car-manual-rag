@@ -16,5 +16,12 @@ class Settings(BaseSettings):
     jwt_ttl_minutes: int = 60
     upload_max_bytes: int = 100 * 1024 * 1024
     deepseek_timeout: float = 60
+    ocr_enabled: bool = True
+    ocr_language: str = "ch"
+    ocr_render_dpi: int = 200
+    vision_enabled: bool = False
+    vision_base_url: str | None = None
+    vision_api_key: str | None = None
+    vision_model: str | None = None
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")

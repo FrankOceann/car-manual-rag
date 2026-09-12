@@ -50,6 +50,23 @@ class ManualVersion(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
+class ManualAsset(Base):
+    __tablename__ = "manual_assets"
+    __table_args__ = (UniqueConstraint("version_id", "page_number", "asset_index", "sha256"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    version_id: Mapped[str] = mapped_column(ForeignKey("manual_versions.id"), index=True)
+    sha256: Mapped[str] = mapped_column(String(64))
+    file_path: Mapped[str] = mapped_column(Text)
+    page_number: Mapped[int] = mapped_column(Integer)
+    asset_index: Mapped[int] = mapped_column(Integer)
+    width: Mapped[int] = mapped_column(Integer)
+    height: Mapped[int] = mapped_column(Integer)
+    ocr_text: Mapped[str] = mapped_column(Text, default="")
+    visual_description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    processing_status: Mapped[str] = mapped_column(String(16))
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
 class ImportJob(Base):
     __tablename__ = "import_jobs"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)

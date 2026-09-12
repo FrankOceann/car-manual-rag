@@ -13,6 +13,8 @@ class Vehicle(BaseModel):
 class Citation(BaseModel):
     manual_id: str | None = None
     version_id: str | None = None
+    asset_id: str | None = None
+    evidence_type: str = "pdf_text"
     manual_title: str
     chapter_title: str
     page_number: int
